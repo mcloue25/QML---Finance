@@ -1,0 +1,36 @@
+# configs/quantum.yaml
+
+model:
+  type: hybrid_quantum
+
+  classical_encoder:
+    architecture: mlp      # mlp | lstm
+    input_dim: 3
+    hidden_dims: [32, 16]
+    activation: relu
+
+  quantum_layer:
+    framework: pennylane   # pennylane | qiskit
+    backend: simulator     # simulator | hardware
+
+    qubits: 4
+    layers: 2
+
+    embedding:
+      type: angle          # angle | amplitude
+      rotation: ry
+
+    entanglement:
+      pattern: full        # full | linear | ring
+
+    measurement:
+      observable: pauli_z
+      shots: null          # null = analytic expectation
+
+  head:
+    type: classification
+    num_classes: 3
+
+training:
+  quantum_learning_rate: 0.01
+  classical_learning_rate: 0.001

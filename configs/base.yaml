@@ -1,0 +1,38 @@
+# configs/base.yaml
+
+experiment:
+  name: financial_regime_detection
+  seed: 42
+  device: cpu        # cpu | cuda
+  log_level: info
+
+data:
+  dataset: sp500_returns
+  frequency: daily
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+  window_size: 30
+  horizon: 1
+
+  features:
+    - log_returns
+    - rolling_volatility
+    - momentum
+
+training:
+  epochs: 50
+  batch_size: 64
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0
+  early_stopping: true
+  patience: 10
+
+evaluation:
+  metrics:
+    - accuracy
+    - f1
+    - stability
+  rolling_window: 250

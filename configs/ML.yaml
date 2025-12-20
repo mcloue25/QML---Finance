@@ -1,0 +1,19 @@
+# configs/ml.yaml
+
+model:
+  type: classical
+
+  encoder:
+    architecture: lstm     # mlp | lstm | transformer
+    input_dim: 3
+    hidden_dim: 64
+    num_layers: 2
+    dropout: 0.1
+
+  head:
+    type: classification
+    num_classes: 3
+
+regularization:
+  dropout: 0.1
+  label_smoothing: 0.0
