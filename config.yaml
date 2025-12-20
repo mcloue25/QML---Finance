@@ -1,0 +1,113 @@
+
+### Design Rationale
+
+- Classical neural networks efficiently extract temporal structure from time-series data
+- Quantum circuits act as:
+  - Nonlinear feature maps
+  - Structured kernels
+  - Expressive but constrained transformations
+- The entire model is trained end-to-end using gradient-based optimization
+
+---
+
+## Quantum Component
+
+### Variational Quantum Circuit (VQC)
+
+- Parameterized single-qubit rotation gates
+- Fixed or learnable entanglement layers
+- Measurement via expectation values
+
+### Training
+
+- Hybrid classical–quantum backpropagation
+- Automatic differentiation
+- Optimization under small qubit counts
+
+Experiments are conducted using **quantum simulators**, with optional noise models to approximate real hardware behavior.
+
+---
+
+## Baseline Models
+
+All quantum-enhanced models are benchmarked against strong classical alternatives, including:
+
+- Logistic Regression  
+- Multi-Layer Perceptron (MLP)  
+- Long Short-Term Memory (LSTM) networks  
+- Transformer encoders  
+- Gaussian Mixture Models (for regime discovery)  
+
+A quantum model is considered meaningful only if it:
+- Matches or exceeds classical performance under controlled conditions, or  
+- Exhibits clear qualitative benefits (e.g., stability, regularization effects)
+
+---
+
+## Evaluation Metrics
+
+- Classification accuracy and F1 score  
+- Temporal stability across rolling windows  
+- Regime persistence and transition behavior  
+- (Optional) Sharpe ratio when linked to a simple trading proxy  
+
+---
+
+## Analysis Focus
+
+The primary contribution of this project lies in **analysis rather than raw performance**.
+
+Key questions examined include:
+
+1. **When does the quantum layer help?**
+   - Small-data regimes
+   - Noisy feature spaces
+   - Low-dimensional embeddings
+
+2. **When does it fail?**
+   - Increasing circuit depth
+   - Hardware noise
+   - Overfitting due to expressivity
+
+3. **Economic interpretation**
+   - Regime consistency
+   - Sensitivity to risk drivers
+   - Stability over time
+
+Negative and null results are documented explicitly.
+
+---
+
+## Optional Extensions
+
+- Quantum kernel methods and kernel-based classifiers  
+- Portfolio optimization via QUBO / Ising formulations  
+- Uncertainty modeling and regime ambiguity  
+
+These extensions are secondary to the core benchmarking study.
+
+---
+
+## Project Philosophy
+
+This repository adheres to three guiding principles:
+
+1. **No hype** — quantum methods are treated as experimental tools, not magic solvers  
+2. **Strong baselines** — classical machine learning is the reference standard  
+3. **Economic relevance** — results are interpreted through a finance-first lens  
+
+---
+
+## Intended Audience
+
+- Quantitative researchers  
+- Machine learning engineers in finance  
+- Researchers exploring near-term quantum machine learning  
+- Students seeking realistic, non-hype QML projects  
+
+---
+
+## Disclaimer
+
+This project does **not** claim quantum advantage or computational speedup.  
+Its purpose is to **critically evaluate hybrid classical–quantum learning methods** under realistic assumptions.
