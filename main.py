@@ -1,5 +1,7 @@
 import os 
 
+import pandas as pd
+
 from Classes.DataGenerator import DataDownloader
 from Classes.FeatureEngineering import FeatureBuilder
 
@@ -26,7 +28,8 @@ def feature_engineering(folder_path:str):
     '''
     for file in os.listdir(folder_path):
         fb = FeatureBuilder(f'{folder_path}{file}')
-        fb.build_features(build='core')
+        fb.generate_features(build='core')
+        fb.df.to_csv(f'data/csv/historical/cleaned/{file}')
 
 
 

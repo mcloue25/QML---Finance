@@ -15,6 +15,7 @@ class FeatureBuilder:
         self.build = build
         self.df = pd.read_csv(self.csv_path)
         self.df = self.preprocessing()
+        self.create_folder('data/csv/historical/cleaned/')
 
 
     def create_folder(self, folder_name: str):
@@ -27,17 +28,18 @@ class FeatureBuilder:
         # Remove heading data
         self.df = self.df.iloc[1:].reset_index(drop=True)
         self.df.set_index('date', inplace=True)
-        print(self.df)
-        # for col in [col for col in self.df.columns if col != 'date']:
+        # Convert all cols to numeric
         for col in self.df.columns:
             self.df[col] = self.df[col].astype(float)
         return self.df
 
 
-    def build_features(self, build='core'):
-        ''' 
+    def generate_features(self, build='core', print_cols=False):
+        ''' Main funcction for building all signals ill be analysing
+        Args:
+            build (String) : Will be used for whatever kind of feature generation process I want to follow
+            print_cols (Bool) : Prints list of columns after all are generated or not
         '''
-        print(self.df)
         # Calculate 1-day log returns to serve as the base signal for all rolling features
         self.get_rolling_return()
 
@@ -86,10 +88,10 @@ class FeatureBuilder:
 
 
         # NOTE - REMOVE OHLC FROM FEATURE FOR COLINEARITY REASONS
-        print(self.df)
-        for i in self.df.columns:
-            print(i)
-        a-b
+        if print_cols:
+            for i in self.df.columns:
+                print(i)
+            a-b
 
 
     def get_rolling_return(self):
