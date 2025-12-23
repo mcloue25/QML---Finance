@@ -2,32 +2,68 @@ import os
 import yfinance as yf
 from tqdm import tqdm
 
-data = yf.download("AAPL", start="2020-01-01", end="2021-01-01")
-print(data.head())
-
 
 
 class DataDownloader:
     ''' Class for downloading videos from URLs (YouTube) links
     '''
-    def __init__(self, tick_list:list, output_path:str):
+    def __init__(self, tick_list:list, period:str, output_path:str):
         self.tick_list = tick_list
         self.output_path = output_path
         # Fetch all ticker data from yFinance
-        self.stock_dict = self.fetch_ticker_data(tick_list)
+        self.stock_dict = self.fetch_ticker_data(tick_list, period)
+
 
 
     def create_folder(self, folder_name: str):
         os.makedirs(folder_name, exist_ok=True)
 
     
-    def fetch_ticker_data(self, tick_list):
+
+    def fetch_ticker_data(self, tick_list, time_frame):
         ''' Fucntion to fetch historical data for a given tick symbol
         Args:
         Returns:
         '''
-        stock_dict = {ticker : yf.download(ticker, period="max") for ticker in tick_list}
+        stock_dict = {}
+
+        for ticker in tick_list:
+            df = yf.download(
+                ticker,
+                period=time_frame,
+                auto_adjust=False,   # keep Adj Close
+                actions=True,        # add Dividends / Stock Splits when available
+                group_by="column",
+                progress=False,
+                threads=True
+            )
+
+            # Standardize columns
+            df = df.rename(columns={
+                "Adj Close": "adj_close",
+                "Close": "close",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Volume": "volume",
+                "Dividends": "dividends",
+                "Stock Splits": "stock_splits"
+            })
+
+            # Clean index and ordering
+            df = df[~df.index.duplicated(keep="first")]
+            df = df.sort_index()
+
+            # Optional: forward fill prices (NOT returns) for minor gaps
+            # df[["open","high","low","close","adj_close"]] = df[["open","high","low","close","adj_close"]].ffill()
+
+            # If you prefer Date as a column:
+            df = df.reset_index().rename(columns={"Date": "date"})
+
+            stock_dict[ticker] = df
         return stock_dict
+
+    
     
 
     def save_data(self, stock_dict:dict, output_path:str):
