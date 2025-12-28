@@ -57,6 +57,19 @@ class FeatureBuilder:
         self.calculate_volatility(20)
         self.calculate_volatility(60)
 
+
+        # NOTE - Narrowing stock direction down to one number 
+        # NOTE - BINARY DIRECTION
+        # self.caclulate_stock_direction(5)
+        # self.caclulate_stock_direction(10)
+        # self.caclulate_stock_direction(20)
+
+        # NOTE - MultiClass
+        self.multi_class_action_vol_adj(num_days=5, vol_col="volatility_20d")
+        self.multi_class_action_vol_adj(num_days=10, vol_col="volatility_20d")
+        self.multi_class_action_vol_adj(num_days=20, vol_col="volatility_20d")
+
+
         # Calculate EWMA volatility to emphasize recent shocks and regime transitions
         self.calculate_EWMA_volatility(20)
         self.calculate_EWMA_volatility(60)
@@ -86,6 +99,11 @@ class FeatureBuilder:
         # skewness captures asymmetry (crash-like negative tail)
         self.calculate_skew(60)
 
+        # Calculating volume
+        self.calculate_volume_z(5)
+        self.calculate_volume_z(10)
+        self.calculate_volume_z(20)
+
 
         # NOTE - REMOVE OHLC FROM FEATURE FOR COLINEARITY REASONS
         if print_cols:
@@ -97,7 +115,6 @@ class FeatureBuilder:
     def get_rolling_return(self):
         ''' Calculate the log return for 1 day
         '''
-        print(self.df)
         self.df["log_return_1d"] = np.log(self.df["adj_close"] / self.df["adj_close"].shift(1))
 
 
@@ -111,6 +128,41 @@ class FeatureBuilder:
             num_days (Int) : Number of days 
         '''
         self.df[f"rolling_mean_return_{num_days}d"] = (self.df["log_return_1d"].rolling(window=num_days, min_periods=num_days).mean())  
+
+
+    def caclulate_stock_direction(self, num_days):
+        '''  calculates the stock direction over the future num_days days
+        '''
+        self.df[f"future_log_return_{num_days}d"] = (self.df["log_return_1d"].shift(-1).rolling(window=num_days).sum())
+        self.df[f"direction_{num_days}d"] = (self.df[f"future_log_return_{num_days}d"] > 0).astype(int)
+
+
+
+    def multi_class_action_vol_adj(self, num_days:int, vol_col="volatility_20d", eps:float = 1e-12):
+        ''' 3-class target using volatility-adjusted future returns:
+            0 = bottom third, 1 = middle, 2 = top third
+        
+        Intepretation:
+            +0.5 → strong upside given current risk
+            −0.5 → strong downside given current risk
+            near 0 → noise / hold
+
+        Resulting Action:
+            Bottom 33% → 0 = sell
+            Middle 33% → 1 = hold
+            Top 33% → 2 = buy
+        '''
+        self.df[f"future_log_return_{num_days}d"] = (self.df["log_return_1d"].shift(-1).rolling(window=num_days).sum())
+        score = self.df[f"future_log_return_{num_days}d"] / (self.df[vol_col].abs() + eps)
+
+        q_low = score.quantile(0.33)
+        q_high = score.quantile(0.67)
+        self.df[f"signal_voladj_{num_days}d"] = pd.cut(
+            score,
+            bins=[-np.inf, q_low, q_high, np.inf],
+            labels=[0, 1, 2],
+            include_lowest=True
+        ).astype("Int64")
 
 
     
@@ -222,11 +274,15 @@ class FeatureBuilder:
         self.df.set_index('date', inplace=True)
 
     
-    def calculate_downside_volatility(self, num_days):
+    def calculate_downside_volatility(self, num_days:int, min_neg_days:int=5):
         ''' Calculate volatility using only negative return days inside each rolling window
         '''
         neg_returns = self.df["log_return_1d"].where(self.df["log_return_1d"] < 0)
-        self.df[f"downside_vol_{num_days}d"] = neg_returns.rolling(window=num_days, min_periods=num_days).std()
+        rolling_std = neg_returns.rolling(window=num_days).std()
+        count_neg = neg_returns.rolling(window=num_days).count()
+        self.df[f"downside_vol_{num_days}d"] = rolling_std.where(count_neg >= min_neg_days)
+        # Handling NaNs outside feature engineering
+        # self.df[f"downside_vol_{num_days}d"] = self.df[f"downside_vol_{num_days}d"].fillna(0.0)
 
 
 

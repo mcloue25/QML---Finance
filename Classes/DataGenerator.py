@@ -26,8 +26,9 @@ class DataDownloader:
         Returns:
         '''
         stock_dict = {}
-
-        for ticker in tick_list:
+        pbar = tqdm(tick_list)
+        for ticker in pbar:
+            pbar.set_description(f"Downloading {ticker} historical data...")
             df = yf.download(
                 ticker,
                 period=time_frame,
