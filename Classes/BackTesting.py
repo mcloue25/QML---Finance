@@ -235,9 +235,10 @@ class BackTest:
 
         return df
 
-    # ---------- Metrics ----------
+
+    # NOTE - Calculating Performance Metrics
     @staticmethod
-    def performance_metrics(bt_df: pd.DataFrame, ann_factor: int = 252) -> Dict[str, float]:
+    def performance_metrics(bt_df: pd.DataFrame, ann_factor: int = 252):
         ''' Compute performance metrics from the backtest DataFrame.
         '''
         total_return = float(bt_df["cum_ret"].iloc[-1])
@@ -302,11 +303,6 @@ class BackTest:
             "n_exits": n_exits,
             "avg_trade_duration_days": avg_duration,
         }
-
-
-
-
-
 
 
 

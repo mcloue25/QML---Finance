@@ -127,32 +127,36 @@ def generate_importance_statistics(input_path:str, stock:str=None):
 
 
 def feature_analysis(input_path:str, stock:str=None):
-    ''' 
+    ''' Function for analysing all generated featuires and assessing their worth for training models
+    Args:
+        input_path (String) : Path to 
+        stock (String) : Name of stock whose features are being analysed
+    Returns:
+        list of key features for that stock
     '''
-    # NOTE - 
-    # generate_importance_statistics(input_path, stock)
+    # Takes a subset of features belonging to each trend family and generates importance statistics
+    generate_importance_statistics(input_path, stock)
 
     # Compare feature results
     csv_folder = f'data/csv/feature_analysis/{stock}/'
     run_ids = os.listdir(csv_folder)
     fa = FeatureAnalyser(results_dir=csv_folder, hist_path=f'{input_path}{stock}.csv', stock=stock, run_ids=run_ids, top_k=5, show_results=True)
+    key_features = fa.stability_df.loc[fa.stability_df["stability_class"].isin(["keep", "conditional"])]
+    return list(key_features.index)
 
 
 
-    
-
-
-def DL_model_training(csv_path):
+def DL_model_training(csv_path:str, stock_name:str, feat_list=None):
     ''' Main function for calling trianing pipelines for different kinds of models
 
     '''
-    # Load and split dataset 
+    # Load and split dataset keeping only key features found trough feature analysis
     X, y, dates = split_train_val_test(
         file_path=csv_path, 
-        feature_cols=['rolling_mean_return_10d', 'price_ma_ratio_20d_centered', 'volatility_20d'], 
+        feature_cols=feat_list, 
         target_col='signal_voladj_10d'
     )
-    create_folder('data/results/')
+    create_folder(f'data/results/ensembles/{stock_name}/')
 
     # X, y already aligned for a given horizon (e.g. y_20)
     X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
@@ -160,17 +164,20 @@ def DL_model_training(csv_path):
     # Train LGBM Classifier
     lgbm = load_LGBM_Classifier()
     lgbm_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test)
-    analyse_ensemble_results(lgbm_results, y_test, dates_dev, y_dev, 'LGBM_V1', output_path='data/results/LGBM_V1/')
+    analyse_ensemble_results(lgbm_results, y_test, dates_dev, y_dev, 'LGBM_V1', output_path=f'data/results/ensembles/{stock_name}/LGBM_V1/')
     
     # Train XGBoost Classifier
     xgb = loadXGBoost_Classifier()
     xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test)
-    analyse_ensemble_results(xgb_results, y_test, dates_dev, y_dev, 'XGBoost_V1', output_path='data/results/XGBoost_V1/')
+    analyse_ensemble_results(xgb_results, y_test, dates_dev, y_dev, 'XGBoost_V1', output_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/')
 
 
 
 def backtest_model_performance(parquet_path, stock_hist_path:str):
-    ''' Run OOF backtest on trained model to evaluate performance  
+    ''' Run OOF backtest on trained model to evaluate performance 
+    Args:
+        parquet_path (String) : Path to saved model path
+        stock_hist_path (String) : Path to ticker historical data
     '''
     oof_df = pd.read_parquet(parquet_path)
     prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
@@ -188,41 +195,53 @@ def backtest_model_performance(parquet_path, stock_hist_path:str):
     metrics = bt.performance_metrics(bt_df)
     trades = bt.trade_stats(bt_df)
 
+    # NOTE - Results (Clean this up)
     pretty_print_json(metrics)
     pretty_print_json(trades)
-
     bt.plot_equity_curve(bt_df, title="OOF Strategy Equity Curve (10d model)")
     bt.plot_positions(bt_df, title="OOF Position (10d model)")
-
+    # This not working
     bt.save(bt_df, {**metrics, **trades}, name="xgb_h10_long_only")
 
 
 
 
 def main():
-    '''  
+    '''  Main function for building models:
+        Plan:
+            - Download ticker data
+            - Generate list of features 
+            - Analyse each features importance / noise contribution
+            - Take subset of key features and train model 
+            - MODEL TRAINING:
+                * Ensembles
+                * Time based models
+                * QML models
+            - Perform backtest
     '''
-    ticker_list = [
-        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    ]
+    # ticker_list = [
+    #     "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+    #     "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+    # ]
+    ticker_list = ["BTC-USD"]
 
     download_path = 'data/csv/testing/'
 
     # Download all ticker data
     # download_data(ticker_list, period="max", output_path=download_path)
 
-    # Engineer features for all tickers
+    # Geneerate features for all downloaded ticker data
     # feature_engineering(download_path, output_path='data/csv/historical/cleaned/')
 
-    # Analyse Feature importance for modelling
-    # feature_analysis('data/csv/historical/cleaned/', stock='BTC-USD')
+    for stock_name in ticker_list:
+        # Analyse Feature importance for modelling
+        key_features = feature_analysis('data/csv/historical/cleaned/', stock=stock_name)
 
-    csv_path = 'data/csv/historical/cleaned/BTC-USD.csv'
-    # DL_model_training(csv_path)
+        csv_path = f'data/csv/historical/cleaned/{stock_name}.csv'
+        DL_model_training(csv_path=f'data/csv/historical/cleaned/{stock_name}.csv', feat_list=key_features)
 
 
-    backtest_model_performance('data/results/XGBoost_V1/XGBoost_V1.parquet', 'data/csv/historical/cleaned/BTC-USD.csv')
+        backtest_model_performance('data/results/XGBoost_V1/XGBoost_V1.parquet', 'data/csv/historical/cleaned/BTC-USD.csv')
 
 
 
