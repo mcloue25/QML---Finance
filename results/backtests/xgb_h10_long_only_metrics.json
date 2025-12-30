@@ -1,13 +1,14 @@
 {
-    "total_log_return": 3.3145881811449964,
-    "annual_return": 0.25481275828204375,
-    "annual_volatility": 0.23334391986067576,
-    "sharpe": 1.0920051331707572,
-    "max_drawdown_log": -0.48803379654431245,
-    "avg_turnover_per_year": 16.418750417345002,
-    "hit_rate": 0.17998779743746188,
-    "pct_time_in_market": 0.3309945088468578,
-    "n_entries": 1074,
-    "n_exits": 156,
-    "avg_trade_duration_days": 1208.5961538461538
+    "total_log_return": 3.3059564328436193,
+    "annual_return": 0.2539942137428636,
+    "annual_volatility": 0.23374788503645683,
+    "sharpe": 1.0866160936739555,
+    "max_drawdown_log": -0.49119854944471086,
+    "avg_turnover_per_year": 16.54080393734545,
+    "hit_rate": 0.17896341463414633,
+    "pct_time_in_market": 0.32957317073170733,
+    "entry_threshold": 0.1,
+    "n_entries": 161,
+    "n_exits": 161,
+    "avg_trade_duration_days": 6.695652173913044
 }

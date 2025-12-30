@@ -80,7 +80,7 @@ def feature_engineering(folder_path:str, output_path:str=None):
     '''
     for file in os.listdir(folder_path):
         print(f'Generating Feature Set for {file.split(".")[0]}')
-        fb = FeatureBuilder(f'{folder_path}{file}')
+        fb = FeatureBuilder(csv_path=f'{folder_path}{file}', output_path=output_path)
         fb.generate_features(build='core')
         fb.df.to_csv(f'{output_path}{file}')
 
@@ -146,7 +146,7 @@ def feature_analysis(input_path:str, stock:str=None):
 
 
 
-def DL_model_training(csv_path:str, stock_name:str, feat_list=None):
+def ensemble_model_training(csv_path:str, stock_name:str, feat_list=None):
     ''' Main function for calling trianing pipelines for different kinds of models
 
     '''
@@ -170,6 +170,7 @@ def DL_model_training(csv_path:str, stock_name:str, feat_list=None):
     xgb = loadXGBoost_Classifier()
     xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test)
     analyse_ensemble_results(xgb_results, y_test, dates_dev, y_dev, 'XGBoost_V1', output_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/')
+
 
 
 
@@ -225,23 +226,23 @@ def main():
     # ]
     ticker_list = ["BTC-USD"]
 
-    download_path = 'data/csv/testing/'
+    download_path = 'data/csv/historical/training/raw/'
 
     # Download all ticker data
     # download_data(ticker_list, period="max", output_path=download_path)
 
     # Geneerate features for all downloaded ticker data
-    # feature_engineering(download_path, output_path='data/csv/historical/cleaned/')
+    # feature_engineering(download_path, output_path='data/csv/historical/training/cleaned/')
 
     for stock_name in ticker_list:
         # Analyse Feature importance for modelling
-        key_features = feature_analysis('data/csv/historical/cleaned/', stock=stock_name)
+        key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
 
-        csv_path = f'data/csv/historical/cleaned/{stock_name}.csv'
-        DL_model_training(csv_path=f'data/csv/historical/cleaned/{stock_name}.csv', feat_list=key_features)
+        # Train ensemble models
+        ensemble_model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features)
 
-
-        backtest_model_performance('data/results/XGBoost_V1/XGBoost_V1.parquet', 'data/csv/historical/cleaned/BTC-USD.csv')
+        # Perform backtest
+        backtest_model_performance(f'data/results/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 'data/csv/historical/training/cleaned/BTC-USD.csv')
 
 
 

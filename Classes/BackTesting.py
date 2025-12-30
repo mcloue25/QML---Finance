@@ -268,37 +268,38 @@ class BackTest:
     
 
     @staticmethod
-    def trade_stats(bt_df: pd.DataFrame):
-        ''' Basic trade stats (works best for long-only).
-            A "trade" starts when position goes 0->1 (or 0->-1) and ends when back to 0.
+    def trade_stats(bt_df: pd.DataFrame, entry_threshold: float = 0.10):
+        ''' Trade stats for continuous positions by defining a 'trade' as being meaningfully invested.
+            Entry: position_lag crosses from < entry_threshold to >= entry_threshold
+            Exit : position_lag crosses from >= entry_threshold to < entry_threshold
         '''
-        pos = bt_df["position_lag"].fillna(0.0)
-        changes = pos.diff().fillna(0.0)
+        pos = bt_df["position_lag"].fillna(0.0).abs()
 
-        entries = (changes != 0) & (pos != 0)
-        exits = (changes != 0) & (pos == 0)
+        in_trade = pos >= entry_threshold
+        prev = in_trade.shift(1).fillna(False)
+
+        entries = in_trade & (~prev)
+        exits = (~in_trade) & prev
+
+        entry_dates = bt_df.index[entries]
+        exit_dates = bt_df.index[exits]
+
+        # Pair entries with the next exit after each entry
+        durations = []
+        j = 0
+        for e in entry_dates:
+            while j < len(exit_dates) and exit_dates[j] <= e:
+                j += 1
+            if j < len(exit_dates):
+                durations.append((exit_dates[j] - e).days)
+                j += 1
 
         n_entries = int(entries.sum())
         n_exits = int(exits.sum())
-
-        # Avg holding length (in days) for completed trades
-        entry_idx = list(bt_df.index[entries])
-        exit_idx = list(bt_df.index[exits])
-
-        # Pair trades in order (simple pairing)
-        durations = []
-        if entry_idx and exit_idx:
-            j = 0
-            for e in entry_idx:
-                while j < len(exit_idx) and exit_idx[j] <= e:
-                    j += 1
-                if j < len(exit_idx):
-                    durations.append((exit_idx[j] - e).days)
-                    j += 1
-
         avg_duration = float(np.mean(durations)) if durations else 0.0
 
         return {
+            "entry_threshold": float(entry_threshold),
             "n_entries": n_entries,
             "n_exits": n_exits,
             "avg_trade_duration_days": avg_duration,

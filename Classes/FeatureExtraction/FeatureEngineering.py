@@ -10,12 +10,13 @@ from sklearn.linear_model import LinearRegression
 class FeatureBuilder:
     ''' Class for downloading videos from URLs (YouTube) links
     '''
-    def __init__(self, csv_path:str, build='core'):
+    def __init__(self, csv_path:str, build='core', output_path:str=None):
         self.csv_path = csv_path
         self.build = build
+        self.output_path = output_path
         self.df = pd.read_csv(self.csv_path)
         self.df = self.preprocessing()
-        self.create_folder('data/csv/historical/cleaned/')
+        self.create_folder(output_path)
 
 
     def create_folder(self, folder_name: str):
