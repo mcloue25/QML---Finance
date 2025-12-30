@@ -1,0 +1,14 @@
+{
+    "total_log_return": 3.3059564328436193,
+    "annual_return": 0.2539942137428636,
+    "annual_volatility": 0.23374788503645683,
+    "sharpe": 1.0866160936739555,
+    "max_drawdown_log": -0.49119854944471086,
+    "avg_turnover_per_year": 16.54080393734545,
+    "hit_rate": 0.17896341463414633,
+    "pct_time_in_market": 0.32957317073170733,
+    "entry_threshold": 0.1,
+    "n_entries": 161,
+    "n_exits": 161,
+    "avg_trade_duration_days": 6.695652173913044
+}
