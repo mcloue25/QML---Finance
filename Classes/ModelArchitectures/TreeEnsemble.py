@@ -12,27 +12,10 @@ from sklearn.metrics import f1_score, log_loss
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import confusion_matrix, classification_report
 
+from utilities import *
 from ..Plotting import Plotter
 
-
-
-def create_folder(folder_name: str):
-    os.makedirs(folder_name, exist_ok=True)
-    
-
-def save_JSON_object(json_object: object, json_path: str):
-    ''' Saves a JSON Object to a path
-    '''
-    with open(json_path, 'w') as outfile:
-        json.dump(json_object, outfile)
-
-
-def load_JSON_object(json_path: str):
-    ''' Loads JSON object from a file
-    '''
-    with open(json_path, "r") as f:
-        json_data = json.load(f)
-        return json_data
+CLASS_STRS = ['Sell', 'Hold', 'Buy']
 
 
 
@@ -90,6 +73,8 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
     '''
     if fit_kwargs is None:
         fit_kwargs = {}
+    fit_kwargs = dict(fit_kwargs)
+    fit_kwargs.pop("callbacks", None)
 
     if labels is None:
         labels = sorted(np.unique(y))
@@ -106,7 +91,7 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
     is_lgbm = model_name.startswith("LGBM")
 
     for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
-        if gap > 0:
+        if gap and gap > 0:
             train_idx = train_idx[:-gap] if len(train_idx) > gap else train_idx[:0]
 
         if len(train_idx) == 0:
@@ -117,52 +102,48 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
 
         model = clone(base_model)
 
-        if is_xgb and early_stopping_rounds is not None:
-            model.fit(
-                X_train, y_train,
-                eval_set=[(X_val, y_val)],
-                early_stopping_rounds=early_stopping_rounds,
-                **fit_kwargs
-            )
+        # NOTE - Early stopping handling
+        if early_stopping_rounds is not None:
+            if is_xgb:
+                early_stop = xgb.callback.EarlyStopping(rounds=early_stopping_rounds, save_best=True)
+                model.set_params(callbacks=[early_stop])
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], **fit_kwargs)
 
-        elif is_lgbm:
-            callbacks = []
-            if early_stopping_rounds is not None:
-                callbacks.append(lgb.early_stopping(stopping_rounds=early_stopping_rounds))
-
-            model.fit(
-                X_train,
-                y_train,
-                eval_set=[(X_val, y_val)],
-                callbacks=callbacks
-            )
+            elif is_lgbm:
+                callbacks = [lgb.early_stopping(stopping_rounds=early_stopping_rounds)]
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], callbacks=callbacks, **fit_kwargs)
+            else:
+                model.fit(X_train, y_train, **fit_kwargs)
 
         else:
-            # fallback for models without early stopping
-            model.fit(X_train, y_train, **fit_kwargs)
+            # no early stopping
+            if is_xgb or is_lgbm:
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], **fit_kwargs)
+            else:
+                model.fit(X_train, y_train, **fit_kwargs)
 
+        # Predict & Score
         proba = model.predict_proba(X_val)
         pred = np.argmax(proba, axis=1)
-
         oof_proba[val_idx] = proba
         oof_pred[val_idx] = pred
-
+        
+        # Generate metrics & store best iteration
         f1 = f1_score(y_val, pred, average="macro")
         loss = log_loss(y_val, proba, labels=labels)
         best_iter = getattr(model, "best_iteration", None)
+        if best_iter is None:
+            best_iter = getattr(model, "best_iteration_", None)
 
         history["fold"].append(fold)
         history["macro_f1"].append(f1)
         history["log_loss"].append(loss)
         history["best_iteration"].append(best_iter)
 
-        print(
-            f"Fold {fold}: macroF1={f1:.4f}, "
-            f"logloss={loss:.4f}, best_iter={best_iter}"
-        )
+        print(f"Fold {fold}: macroF1={f1:.4f} ::: log_loss={loss:.4f}, best_iter={best_iter}")
 
     mask = ~np.isnan(oof_pred)
-    print("\nOOF macroF1:",f1_score(y[mask], oof_pred[mask].astype(int), average="macro"))
+    print("\nOOF macroF1:", f1_score(y[mask], oof_pred[mask].astype(int), average="macro"))
 
     return oof_pred.astype(int), oof_proba, history
 
@@ -184,7 +165,7 @@ def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test,gap=20, n_split
     print(f"DEV samples: {len(y_dev):,} | TEST samples: {len(y_test):,}")
     print(f"CV splits: {n_splits} | gap: {gap}\n")
 
-    print("==> Running walk-forward CV...")
+    print("Running walk-forward CV...")
     oof_pred, oof_proba, hist = walkforward_cv_predict(
         base_model,
         X_dev,
@@ -198,31 +179,28 @@ def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test,gap=20, n_split
     cv_time = time.time() - t0
     print(f"\nCV complete in {cv_time:.1f}s")
 
-    # Summarize CV history
+    # 
     mean_f1 = float(np.mean(hist["macro_f1"]))
-    std_f1  = float(np.std(hist["macro_f1"]))
-    mean_ll = float(np.mean(hist["logloss"]))
-    std_ll  = float(np.std(hist["logloss"]))
+    std_f1 = float(np.std(hist["macro_f1"]))
+    mean_ll = float(np.mean(hist["log_loss"]))
+    std_ll = float(np.std(hist["log_loss"]))
+    
     print(f"CV macroF1: {mean_f1:.4f} ± {std_f1:.4f}")
     print(f"CV logloss: {mean_ll:.4f} ± {std_ll:.4f}\n")
 
-    print("==> Fitting final model on all DEV and evaluating on TEST...")
+    print("Fitting on dev & evaluating on test")
     final_model = clone(base_model)
     final_model.fit(X_dev, y_dev)
 
+    # Calculate results on test
     test_proba = final_model.predict_proba(X_test)
     test_pred = test_proba.argmax(axis=1)
-
     test_f1 = f1_score(y_test, test_pred, average="macro")
     test_loss = log_loss(y_test, test_proba, labels=[0,1,2])
 
-    print(f"TEST macroF1: {test_f1:.4f}")
-    print(f"TEST logloss: {test_loss:.4f}\n")
 
-    print("TEST confusion matrix (rows=true, cols=pred):")
-    print(confusion_matrix(y_test, test_pred, labels=[0,1,2]))
-    print("\nTEST classification report:")
-    print(classification_report(y_test, test_pred, labels=[0,1,2], digits=4))
+    print(f"TEST macroF1: {test_f1:.4f}")
+    print(f"TEST log loss: {test_loss:.4f}\n")
 
     total_time = time.time() - t0
     print(f"\nTotal runtime: {total_time:.1f}s")
@@ -269,12 +247,23 @@ def build_oof_df(dates, y_true, oof_pred, oof_proba, horizon, model_name):
 
 
 
-def analyse_ensemble_results(results_dict:dict, dates_dev, y_dev:list, arch_name:str, output_path:str):
-    ''' Main fucntion for 
+def analyse_ensemble_results(results_dict:dict, y_test:list, dates_dev, y_dev:list, arch_name:str, output_path:str):
+    ''' Main fucntion for analysing a set of ensemble results
     '''
     # Create output folder
     create_folder(output_path)
+    create_folder(f'{output_path}graphs/')
 
+    print(results_dict.keys())
+    # Visualise Learning process
+    plotter = Plotter('')
+    # plotter.plot_train_val(results['hist'])
+    print()
+    plotter.plot_hist(subset_dict(results_dict['hist'], ['log_loss', 'fold']), title='Loss Hist', xaxis='fold', yaxis='log_loss', save_path=f'{output_path}graphs/CV_fold_hist.png')
+    # Plot confusion Matrices
+    plotter.plot_confusion_matrices(y_test, results_dict['test_pred'], labels=[0, 1, 2], class_names=CLASS_STRS, title_prefix="Test", save_path=f'{output_path}graphs/confusion_matrix.png')
+    
+    
     # Save oof
     oof_df = build_oof_df(
         dates_dev,
@@ -285,8 +274,3 @@ def analyse_ensemble_results(results_dict:dict, dates_dev, y_dev:list, arch_name
         model_name=arch_name
     )
     oof_df.to_parquet(f"{output_path}{arch_name}.parquet")
-
-    save_JSON_object(results_dict['hist'], 'data/json/lgbm.json')
-    # Visualise Learning process
-    # plotter = Plotter('')
-    # plot

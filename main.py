@@ -4,6 +4,8 @@ import pandas as pd
 
 from sklearn.model_selection import TimeSeriesSplit
 
+from utilities import *
+from Classes.BackTesting import BacktestConfig, BackTest
 from Classes.FeatureExtraction.DataGenerator import DataDownloader
 from Classes.FeatureExtraction.SignalAnalysis import SignalAnalyser
 from Classes.FeatureExtraction.FeatureAnalysis import FeatureAnalyser
@@ -12,10 +14,6 @@ from Classes.FeatureExtraction.FeatureEngineering import FeatureBuilder
 # Load model architectures for testing
 from Classes.ModelArchitectures.TreeEnsemble import *
 
-
-
-def create_folder(folder_name: str):
-    os.makedirs(folder_name, exist_ok=True)
     
 
 
@@ -145,7 +143,8 @@ def feature_analysis(input_path:str, stock:str=None):
 
 
 def DL_model_training(csv_path):
-    '''  
+    ''' Main function for calling trianing pipelines for different kinds of models
+
     '''
     # Load and split dataset 
     X, y, dates = split_train_val_test(
@@ -153,23 +152,50 @@ def DL_model_training(csv_path):
         feature_cols=['rolling_mean_return_10d', 'price_ma_ratio_20d_centered', 'volatility_20d'], 
         target_col='signal_voladj_10d'
     )
+    create_folder('data/results/')
 
     # X, y already aligned for a given horizon (e.g. y_20)
-    X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(
-        X, y, dates, test_size=0.2
-    )
+    X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
 
     # Train LGBM Classifier
     lgbm = load_LGBM_Classifier()
     lgbm_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test)
+    analyse_ensemble_results(lgbm_results, y_test, dates_dev, y_dev, 'LGBM_V1', output_path='data/results/LGBM_V1/')
     
-    # Train XGBoost model
-    # xgb = loadXGBoost_Classifier()
-    # xgb_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test)
+    # Train XGBoost Classifier
+    xgb = loadXGBoost_Classifier()
+    xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test)
+    analyse_ensemble_results(xgb_results, y_test, dates_dev, y_dev, 'XGBoost_V1', output_path='data/results/XGBoost_V1/')
 
-    create_folder('data/results/')
 
-    analyse_ensemble_results(lgbm_results, dates_dev, y_dev, 'LGBM_V1', output_path='data/results/LGBM_V1/')
+
+def backtest_model_performance(parquet_path, stock_hist_path:str):
+    ''' Run OOF backtest on trained model to evaluate performance  
+    '''
+    oof_df = pd.read_parquet(parquet_path)
+    prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
+
+    cfg = BacktestConfig(
+        horizon_days=10,
+        transaction_cost=0.0005,
+        mode="long_only",
+        hold_rule="signal_until_change"   # or "fixed_horizon"
+    )
+
+    bt = BackTest(path="results/backtests", config=cfg)
+
+    bt_df = bt.run(oof_df, prices)
+    metrics = bt.performance_metrics(bt_df)
+    trades = bt.trade_stats(bt_df)
+
+    pretty_print_json(metrics)
+    pretty_print_json(trades)
+
+    bt.plot_equity_curve(bt_df, title="OOF Strategy Equity Curve (10d model)")
+    bt.plot_positions(bt_df, title="OOF Position (10d model)")
+
+    bt.save(bt_df, {**metrics, **trades}, name="xgb_h10_long_only")
+
 
 
 
@@ -193,7 +219,10 @@ def main():
     # feature_analysis('data/csv/historical/cleaned/', stock='BTC-USD')
 
     csv_path = 'data/csv/historical/cleaned/BTC-USD.csv'
-    DL_model_training(csv_path)
+    # DL_model_training(csv_path)
+
+
+    backtest_model_performance('data/results/XGBoost_V1/XGBoost_V1.parquet', 'data/csv/historical/cleaned/BTC-USD.csv')
 
 
 
