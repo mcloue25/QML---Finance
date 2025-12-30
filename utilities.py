@@ -1,6 +1,11 @@
 # Commonly used functions
 import os 
 import json 
+import uuid
+
+
+
+from datetime import datetime, timezone
 
 
 
@@ -38,3 +43,26 @@ def subset_dict(data:dict, cols:list):
     ''' Used to subset results dicts for displaying a subset of data 
     '''
     return {name: data[name] for name in cols}
+
+
+
+def generate_run_ID(symbol:str, model_type:str, horizon_days:int=10):
+    '''  Generates a UUID for eahc backtest run for comparison against other runs
+    Args:
+        symbol (String) : Traded stock name
+        model_type (String) : Model type being backtested
+        horizon_days (Int) : Horizon for backtest (Default is 10)
+    Returns:
+        meta (Dict) : Dict containing UUID data for backtest 
+    '''
+    run_id = str(uuid.uuid4())
+    meta = {
+        "run_id": run_id,
+        "symbol": symbol,
+        "model_type": model_type,
+        "horizon_days": horizon_days,
+        "long_only": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        # add your split dates if you have them
+    }
+    return meta 

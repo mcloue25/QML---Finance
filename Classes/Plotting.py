@@ -53,6 +53,7 @@ class Plotter:
         ax.margins(0.1)
         fig.tight_layout()
         plt.show()
+        plt.close()
         
 
     def plot_hist(self, data:dict, title:str, output_folder:str=None, xaxis='X-Axis Filler', yaxis='Y-Axis Filler', show=False, save_path=None):
@@ -84,9 +85,9 @@ class Plotter:
         plt.tight_layout()
         if show:
             plt.show()
-            plt.close()
         if save_path:
             plt.savefig(save_path)
+        plt.close()
 
 
 
@@ -126,8 +127,8 @@ class Plotter:
         plt.tight_layout()
         if show:
             plt.show()
-            plt.close()
         if save_path:
             plt.savefig(save_path)
+        plt.close()
 
         

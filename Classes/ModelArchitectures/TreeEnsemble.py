@@ -150,8 +150,9 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
 
 
 
-def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test,gap=20, n_splits=5):
+def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test, gap=20, n_splits=5):
     ''' Main loop for training an ensemble model
+        Gap=20 to prevent data leakage
     Args:
         base_model (Model) : Base ensemble mdoel for trianing
         X_dev (Tensor) : X training & val data 

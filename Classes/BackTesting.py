@@ -1,12 +1,14 @@
 import os
 import json
-from dataclasses import dataclass
-from typing import Dict, Optional, Literal
+import uuid
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Dict, Optional, Literal
 
 def pretty_print_json(obj: dict) -> None:
     '''Pretty print a dict as JSON.'''
@@ -46,6 +48,10 @@ class BackTest:
         if self.path:
             os.makedirs(self.path, exist_ok=True)
 
+
+    def create_folder(self, folder_name: str):
+        os.makedirs(folder_name, exist_ok=True)
+    
 
     # ---------- Data prep ----------
     @staticmethod
@@ -304,11 +310,63 @@ class BackTest:
             "n_exits": n_exits,
             "avg_trade_duration_days": avg_duration,
         }
+    
+
+    def trade_list(self, bt_df, price_col=None, pos_col=None):
+        df = bt_df.copy()
+
+        # Auto-detect sensible defaults
+        if pos_col is None:
+            for c in ["position", "position_lag", "pos", "positions", "exposure"]:
+                if c in df.columns:
+                    pos_col = c
+                    break
+        if price_col is None:
+            for c in ["close", "price", "adj_close"]:
+                if c in df.columns:
+                    price_col = c
+                    break
+
+        if pos_col not in df.columns:
+            raise ValueError(f"bt_df missing required column '{pos_col}'")
+        if price_col not in df.columns:
+            raise ValueError(f"bt_df missing required column '{price_col}' (or pass price_col=...)")
+
+        pos = df[pos_col].fillna(0).astype(int)
+        price = df[price_col].astype(float)
+
+        # Entry when position goes 0->1, exit when 1->0
+        entries = (pos.shift(1, fill_value=0) == 0) & (pos == 1)
+        exits   = (pos.shift(1, fill_value=0) == 1) & (pos == 0)
+
+        entry_dates = df.index[entries]
+        exit_dates  = df.index[exits]
+
+        # If we end with an open trade, close it on last bar
+        if len(entry_dates) > len(exit_dates):
+            exit_dates = exit_dates.append(pd.Index([df.index[-1]]))
+
+        trades = []
+        for e, x in zip(entry_dates, exit_dates):
+            entry_px = price.loc[e]
+            exit_px  = price.loc[x]
+            ret = (exit_px / entry_px) - 1.0
+            trades.append({
+                "entry_time": e,
+                "exit_time": x,
+                "entry_price": entry_px,
+                "exit_price": exit_px,
+                "return": ret,
+                "pnl_pct": ret * 100.0,
+                "bars_held": int((df.loc[e:x].shape[0]) - 1)
+            })
+
+        return pd.DataFrame(trades)
 
 
 
     @staticmethod
-    def plot_equity_curve(bt_df: pd.DataFrame, title: str = "Strategy Equity Curve") -> None:
+    def plot_equity_curve(bt_df: pd.DataFrame, title: str = "Strategy Equity Curve", show:bool=False, save_path=None):
         '''Plot cumulative log returns.'''
         plt.figure(figsize=(12, 5))
         plt.plot(bt_df.index, bt_df["cum_ret"], label="Strategy (log cum ret)")
@@ -317,10 +375,14 @@ class BackTest:
         plt.ylabel("Cumulative log return")
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(save_path)
+        plt.close()
 
     @staticmethod
-    def plot_positions(bt_df: pd.DataFrame, title: str = "Position Over Time") -> None:
+    def plot_positions(bt_df: pd.DataFrame, title: str = "Position Over Time", show:bool=False, save_path=None):
         '''Plot held position over time.'''
         plt.figure(figsize=(12, 3))
         plt.plot(bt_df.index, bt_df["position_lag"], linewidth=1)
@@ -328,19 +390,62 @@ class BackTest:
         plt.xlabel("Date")
         plt.ylabel("Position")
         plt.tight_layout()
-        plt.show()
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(save_path)
+        plt.close()
 
 
-    def save(self, bt_df: pd.DataFrame, metrics: Dict[str, float], name: str) -> None:
-        '''Save backtest outputs to disk (parquet + json).'''
-        if not self.path:
-            raise ValueError("BackTest was initialized without a path; cannot save.")
+    # def save(self, bt_df: pd.DataFrame, metrics: Dict[str, float], name: str) -> None:
+    #     ''' Save backtest outputs to parquet
+    #     '''
+    #     if not self.path:
+    #         raise ValueError("BackTest was initialized without a path; cannot save.")
 
-        bt_path = os.path.join(self.path, f"{name}_bt.parquet")
-        metrics_path = os.path.join(self.path, f"{name}_metrics.json")
+    #     bt_path = os.path.join(self.path, f"{name}_bt.parquet")
+    #     metrics_path = os.path.join(self.path, f"{name}_metrics.json")
 
-        bt_df.to_parquet(bt_path)
-        with open(metrics_path, "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=4)
+    #     bt_df.to_parquet(bt_path)
+    #     with open(metrics_path, "w", encoding="utf-8") as f:
+    #         json.dump(metrics, f, indent=4)
 
-        print(f"Saved:\n  {bt_path}\n  {metrics_path}")
+    #     print(f"Saved:\n  {bt_path}\n  {metrics_path}")
+
+
+
+    def save_backtest_artifacts(self, base_dir, run_row, bt_df, trades_df=None):
+        ''' Function to save backtest results for visualisation on dashboard
+        Args:
+            base_dir (String) : Base directory to save all trade and curve info to
+            run_row ()
+            bt_df (DataFrame) : DF containing backtest results
+            trades_df (Bool) : Bool to save trades or not
+        Returns:
+            Creates curves and trades parquet files
+        '''
+        base_dir = Path(base_dir)
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        run_id = run_row["run_id"]
+
+        # Save run table
+        runs_path = base_dir / "runs.parquet"
+        run_df = pd.DataFrame([run_row])
+
+        if runs_path.exists():
+            existing = pd.read_parquet(runs_path)
+            pd.concat([existing, run_df], ignore_index=True).to_parquet(runs_path, index=False)
+        else:
+            run_df.to_parquet(runs_path, index=False)
+
+        # Save curve/time series per run
+        curve_cols = [c for c in ["date", "equity", "returns", "drawdown", "position"] if c in bt_df.columns]
+        curve_df = bt_df[curve_cols].copy()
+        self.create_folder(f'{base_dir}/curves/')
+        curve_df.to_parquet(base_dir / "curves" / f"{run_id}.parquet", index=False)
+
+        # Save Trades
+        if trades_df is not None:
+            self.create_folder(f'{base_dir}/trades/')
+            trades_df.to_parquet(base_dir / "trades" / f"{run_id}.parquet", index=False)

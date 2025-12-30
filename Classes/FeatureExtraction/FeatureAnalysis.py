@@ -111,7 +111,7 @@ class FeatureAnalyser:
         # Generates stable core features that have predicive stability between different runs 
         self.generate_core_features(file_pattern="*_perm_importance.csv")
 
-        self.analyse_correlation_matrix(self.core_features)
+        self.analyse_correlation_matrix(self.core_features, target_col=f'{self.stock}_signal_voladj_10d')
         
 
 
