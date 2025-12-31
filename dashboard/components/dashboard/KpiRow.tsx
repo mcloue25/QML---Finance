@@ -30,7 +30,7 @@ export default function KpiRow({ header }: { header: HeaderVM | null }) {
           <Metric label="Total log return" value={fmtNum((header as any)?.totalLogReturn, 3)} />
           <Metric label="# Entries" value={fmtNum((header as any)?.nEntries, 0)} />
           <Metric label="Avg trade days" value={fmtNum((header as any)?.avgTradeDays, 2)} />
-          <Metric label="Entry threshold" value={fmtNum((header as any)?.entryThreshold, 2)} />
+          <Metric label="Entry threshold" value={fmtNum((header as any)?.entryThreshold, 3)} />
         </CardContent>
       </Card>
     </div>

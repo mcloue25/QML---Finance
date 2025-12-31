@@ -85,7 +85,26 @@ function stdevSample(arr: number[]) {
 }
 
 /**
- * Compute a minimal-but-useful metrics object from curves.
+ * Approximate turnover / year from position changes.
+ * Only meaningful if `position` is a weight/exposure series.
+ */
+function approxTurnoverPerYear(curves: any[]) {
+  const pos = curves
+    .map((r) => toNum(r.position ?? r.position_lag ?? r.target_position))
+    .filter((v): v is number => v != null);
+
+  if (pos.length < 2) return null;
+
+  let sumAbsDiff = 0;
+  for (let i = 1; i < pos.length; i++) sumAbsDiff += Math.abs(pos[i] - pos[i - 1]);
+
+  // avg daily turnover * 252
+  const avgDaily = sumAbsDiff / (pos.length - 1);
+  return avgDaily * 252;
+}
+
+/**
+ * Compute a minimal metrics object from curves.
  * Assumes daily returns; uses 252 scaling.
  */
 function computeMetricsFromCurves(curves: any[]) {
@@ -97,7 +116,6 @@ function computeMetricsFromCurves(curves: any[]) {
 
   if (!rets.length) return null;
 
-  const n = rets.length;
   const mu = mean(rets);
   const sd = stdevSample(rets);
 
@@ -106,13 +124,11 @@ function computeMetricsFromCurves(curves: any[]) {
   const sharpe =
     annual_volatility && annual_volatility > 0 ? annual_return / annual_volatility : null;
 
-  // drawdown: prefer drawdown column if present
   const dd = curves
     .map((r) => toNum(r.drawdown ?? r.drawdown_net ?? r.drawdown_gross))
     .filter((v): v is number => v != null);
   const max_drawdown = dd.length ? dd.reduce((mn, v) => Math.min(mn, v), 0) : null;
 
-  // time in market from position
   const eps = 1e-12;
   const pos = curves
     .map((r) => toNum(r.position ?? r.position_lag ?? r.target_position))
@@ -120,33 +136,29 @@ function computeMetricsFromCurves(curves: any[]) {
   const pct_time_in_market =
     pos.length ? pos.filter((p) => Math.abs(p) > eps).length / pos.length : null;
 
-  // hit rate from returns (exclude zeros)
   const nonzero = rets.filter((r) => Math.abs(r) > eps);
   const hit_rate =
     nonzero.length ? nonzero.filter((r) => r > 0).length / nonzero.length : null;
+
+  // total log return from final equity if available
+  const lastEq = toNum(curves[curves.length - 1]?.equity);
+  const total_log_return = lastEq != null && lastEq > 0 ? Math.log(lastEq) : null;
 
   return {
     annual_return,
     annual_volatility,
     sharpe,
-    // Your UI labels this "log"; your drawdown may or may not be log. You can rename later.
     max_drawdown_log: max_drawdown,
-    avg_turnover_per_year: null, // not available from your current curve_df
+    avg_turnover_per_year: approxTurnoverPerYear(curves),
     pct_time_in_market,
     hit_rate,
+    total_log_return,
   };
 }
 
 /**
- * Normalize your curve_df schema (equity/returns/drawdown/position)
- * into the fields your dashboard currently expects.
- *
- * Your curve_df columns:
- *  - date (string)
- *  - equity (string/number)        -> cum_ret_net (for now)
- *  - returns (string/number)       -> net_ret
- *  - drawdown (string/number)      -> drawdown_net
- *  - position (string/number)      -> position_lag
+ * Normalize curve_df schema (equity/returns/drawdown/position)
+ * into the fields your dashboard expects.
  */
 function normalizeCurvesForDashboard(curves: any[]) {
   return curves.map((r) => {
@@ -161,24 +173,49 @@ function normalizeCurvesForDashboard(curves: any[]) {
       ...r,
       date,
 
-      // dashboard contract
-      cum_ret_net: equity,      // model equity curve
-      cum_ret_gross: equity,    // you don't have gross yet; mirror net for now
+      cum_ret_net: equity,
+      cum_ret_gross: equity,
       drawdown_net: dd,
       drawdown_gross: dd,
+
       position_lag: pos,
-      target_position: pos,     // you don't have target yet; mirror position
-      turnover: null,           // you don't have it yet
+      target_position: pos,
+
+      turnover: null,
       net_ret: ret,
       strategy_ret: ret,
 
-      // probabilities/signals not available yet
       p_class_0: null,
       p_class_1: null,
       p_class_2: null,
       y_pred: null,
     };
   });
+}
+
+function computeTradeMetrics(trades: any[]) {
+  if (!trades?.length) return null;
+
+  const durationVals: number[] = [];
+  const entryThresholdVals: number[] = [];
+
+  for (const t of trades) {
+    const dur =
+      toNum(t.duration_days) ??
+      toNum(t.holding_days) ??
+      toNum(t.trade_duration_days) ??
+      null;
+    if (dur != null) durationVals.push(dur);
+
+    const thr = toNum(t.entry_threshold) ?? toNum(t.threshold) ?? null;
+    if (thr != null) entryThresholdVals.push(thr);
+  }
+
+  const nEntries = trades.length;
+  const avgTradeDays = durationVals.length ? mean(durationVals) : null;
+  const entryThreshold = entryThresholdVals.length ? entryThresholdVals[0] : null;
+
+  return { nEntries, avgTradeDays, entryThreshold };
 }
 
 export async function GET(req: Request) {
@@ -279,7 +316,6 @@ export async function GET(req: Request) {
       }
     }
 
-    // Normalize for dashboard contract
     const curves = normalizeCurvesForDashboard(curvesRaw);
 
     // If metrics missing, compute from curves
@@ -287,6 +323,15 @@ export async function GET(req: Request) {
       const computed = computeMetricsFromCurves(curvesRaw);
       if (computed) metrics = computed;
       else warnings.push("metrics missing and could not be computed from curves");
+    } else {
+      // Ensure total_log_return exists even if runs.parquet didn’t provide it
+      if ((metrics as any).total_log_return == null) {
+        const lastEq = curvesRaw.length ? toNum(curvesRaw[curvesRaw.length - 1]?.equity) : null;
+        (metrics as any).total_log_return = lastEq != null && lastEq > 0 ? Math.log(lastEq) : null;
+      }
+      if ((metrics as any).avg_turnover_per_year == null) {
+        (metrics as any).avg_turnover_per_year = approxTurnoverPerYear(curvesRaw);
+      }
     }
 
     // Trades (optional)
@@ -300,6 +345,15 @@ export async function GET(req: Request) {
       }
     }
 
+    // Add trade-derived metrics (if available)
+    const tradeMetrics = computeTradeMetrics(trades);
+    if (tradeMetrics) {
+      metrics = metrics || {};
+      (metrics as any).n_entries = tradeMetrics.nEntries;
+      (metrics as any).avg_trade_duration_days = tradeMetrics.avgTradeDays;
+      (metrics as any).entry_threshold = tradeMetrics.entryThreshold;
+    }
+
     return NextResponse.json({
       ok: true,
       meta: {
@@ -310,7 +364,7 @@ export async function GET(req: Request) {
         limits: { curves: limitCurves, trades: limitTrades },
       },
       metrics,
-      bt: curves,   // ✅ now matches your dashboard’s expected keys
+      bt: curves,
       trades,
       warnings,
       sources: {
