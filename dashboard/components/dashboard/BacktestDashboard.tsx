@@ -30,7 +30,12 @@ export default function BacktestDashboard() {
 
   const [query, setQuery] = useState("");
   const [modelType, setModelType] = useState("xgb");
+
+  // Keeping horizon state around in case other UI still references it,
+  // but it's no longer used to load /api/run (UUID run folders now).
   const [horizon, setHorizon] = useState<number | null>(null);
+
+  // UUID selected from catalog.runs[asset][modelType]
   const [runId, setRunId] = useState<string | null>(null);
 
   const [run, setRun] = useState<RunPayload | null>(null);
@@ -39,33 +44,9 @@ export default function BacktestDashboard() {
   const [view, setView] = useState<"net" | "gross">("net");
   const [posView, setPosView] = useState<"position" | "turnover">("position");
 
-
-  // TESTING PLUMBING
+  // Plumbing / status
   const [runStatus, setRunStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [runError, setRunError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!asset) return;
-
-    (async () => {
-        setRunStatus("loading");
-        setRunError(null);
-
-        const res = await fetch(`/api/run?asset=${encodeURIComponent(asset)}&model=${encodeURIComponent(modelType)}${horizon != null ? `&h=${encodeURIComponent(String(horizon))}` : ""}`);
-        const json = await res.json();
-
-        if (!res.ok || !json.ok) {
-        setRun(null);
-        setRunStatus("error");
-        setRunError(json?.error || json?.detail || "Unknown error");
-        return;
-        }
-
-        setRun(json);
-        setRunStatus("ok");
-    })();
-    }, [asset, modelType, horizon]);
-
 
   // Load list of CSV files => Asset dropdown
   useEffect(() => {
@@ -83,65 +64,72 @@ export default function BacktestDashboard() {
     })();
   }, []);
 
-  // (Optional) Load catalog if you still use it for horizons/model types/runOptions UI
+  // Load catalog (models + UUID runs)
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/catalog");
-      if (!res.ok) return; // allow dashboard to still work without catalog
+      if (!res.ok) return;
 
       const json = (await res.json()) as Catalog;
       setCatalog(json);
 
-      // only set horizon defaults from catalog (don’t overwrite asset selection from CSV list)
-      setHorizon((prev) => prev ?? (json.horizons?.[0] ?? null));
+      // You can still default modelType from catalog if present
       setModelType((prev) => prev ?? (json.model_types?.[0] ?? "xgb"));
+      // horizon no longer drives runs, but leaving default if you still show it somewhere
+      setHorizon((prev) => prev ?? (json as any)?.horizons?.[0] ?? null);
     })();
   }, []);
 
-  // ✅ Load run payload whenever asset changes (this updates the whole dashboard)
+  // Derive all UUID run ids for selected asset+model
+  const allRunIds = useMemo<string[]>(() => {
+    if (!catalog?.runs || !asset) return [];
+    const byModel = catalog.runs[asset];
+    if (!byModel) return [];
+    const ids = byModel[modelType] || [];
+    return Array.isArray(ids) ? ids : [];
+  }, [catalog, asset, modelType]);
+
+  // Apply query filtering to UUIDs (optional)
+  const runIds = useMemo<string[]>(() => {
+    if (!query) return allRunIds;
+    const q = query.toLowerCase().trim();
+    if (!q) return allRunIds;
+    return allRunIds.filter((id) => id.toLowerCase().includes(q));
+  }, [allRunIds, query]);
+
+  // Ensure runId is valid whenever asset/model/query changes run list
   useEffect(() => {
-    if (!asset) return;
+    if (!runIds.length) {
+      setRunId(null);
+      return;
+    }
+    setRunId((prev) => (prev && runIds.includes(prev) ? prev : runIds[0]));
+  }, [runIds]);
+
+  // ✅ Load selected run payload by UUID
+  useEffect(() => {
+    if (!asset || !modelType || !runId) return;
 
     (async () => {
-      const res = await fetch(
-        `/api/run?asset=${encodeURIComponent(asset)}&model=${encodeURIComponent(
-          modelType
-        )}${horizon != null ? `&h=${encodeURIComponent(String(horizon))}` : ""}`
-      );
+      setRunStatus("loading");
+      setRunError(null);
 
+      const res = await fetch(
+        `/api/run?asset=${encodeURIComponent(asset)}&model=${encodeURIComponent(modelType)}&run=${encodeURIComponent(runId)}`
+      );
       const json = await res.json();
 
       if (!res.ok || !json.ok) {
-        console.error("Failed to load run:", json);
         setRun(null);
+        setRunStatus("error");
+        setRunError(json?.error || json?.detail || "Unknown error");
         return;
       }
 
       setRun(json as RunPayload);
+      setRunStatus("ok");
     })();
-  }, [asset, modelType, horizon]);
-
-  // If you still want runOptions from catalog (e.g. run_id selection UI)
-  const runOptions = useMemo(() => {
-    if (!catalog || !asset || horizon == null) return [];
-    return (catalog.runs || [])
-      .filter((r) => r.asset === asset)
-      .filter((r) => (modelType ? r.model_type === modelType : true))
-      .filter((r) => Number(r.horizon) === Number(horizon))
-      .filter((r) =>
-        query
-          ? `${r.asset} ${r.model_type} h=${r.horizon} ${r.feature_set || ""}`
-              .toLowerCase()
-              .includes(query.toLowerCase())
-          : true
-      )
-      .sort((a, b) => (b.annual_return ?? 0) - (a.annual_return ?? 0));
-  }, [catalog, asset, horizon, modelType, query]);
-
-  // Default to best run within filter set (only matters if you still use runId-based endpoints)
-  useEffect(() => {
-    setRunId(runOptions.length ? runOptions[0].run_id : null);
-  }, [runOptions]);
+  }, [asset, modelType, runId]);
 
   // Baseline can still be loaded by asset (optional)
   useEffect(() => {
@@ -165,9 +153,9 @@ export default function BacktestDashboard() {
     if (!run?.bt) return [];
     const bt = run.bt;
     const base = baseline?.bt || null;
-    const baseByDate = base ? new Map(base.map((d) => [d.date, d])) : null;
+    const baseByDate = base ? new Map(base.map((d: any) => [d.date, d])) : null;
 
-    return bt.map((d) => {
+    return bt.map((d: any) => {
       const b = baseByDate ? baseByDate.get(d.date) : null;
       return {
         date: d.date,
@@ -191,26 +179,32 @@ export default function BacktestDashboard() {
   }, [run, baseline]);
 
   const header = useMemo<HeaderVM | null>(() => {
-    if (!run?.meta || !run?.metrics) return null;
-    return {
-      asset: run.meta.asset,
-      model: `${run.meta.model_type?.toUpperCase() || "MODEL"} • h=${run.meta.horizon}`,
-      featureSet: run.meta.feature_set || "—",
-      period: `${run.meta.test_start || "?"} → ${run.meta.test_end || "?"}`,
-      policy: run.meta.policy_summary || "Policy-aware sizing + costs",
-      costs:
-        run.meta.transaction_cost_bps != null
-          ? `${run.meta.transaction_cost_bps} bps`
-          : "—",
-      annualReturn: run.metrics.annual_return,
-      vol: run.metrics.annual_volatility,
-      sharpe: run.metrics.sharpe,
-      mdd: run.metrics.max_drawdown_log,
-      turnover: run.metrics.avg_turnover_per_year,
-      tim: run.metrics.pct_time_in_market,
-      hit: run.metrics.hit_rate,
-    };
-  }, [run]);
+  if (!run?.meta || !run?.metrics) return null;
+
+  const model = run.meta.model_type?.toUpperCase?.() || "MODEL";
+  const runLabel = runId ? ` • run=${runId.slice(0, 8)}` : "";
+
+  return {
+    asset: run.meta.asset,
+    model: `${model}${runLabel}`,
+    featureSet: (run.meta as any).feature_set || "—",
+    period: `${(run.meta as any).test_start || "?"} → ${(run.meta as any).test_end || "?"}`,
+    policy: (run.meta as any).policy_summary || "Policy-aware sizing + costs",
+    costs:
+      (run.meta as any).transaction_cost_bps != null
+        ? `${(run.meta as any).transaction_cost_bps} bps`
+        : "—",
+    annualReturn: run.metrics.annual_return,
+    vol: run.metrics.annual_volatility,
+    sharpe: run.metrics.sharpe,
+    mdd: run.metrics.max_drawdown_log,
+    turnover: run.metrics.avg_turnover_per_year,
+    tim: run.metrics.pct_time_in_market,
+    hit: run.metrics.hit_rate,
+  };
+}, [run, runId]);
+
+
 
   return (
     <div className="min-h-screen bg-background">
@@ -230,14 +224,14 @@ export default function BacktestDashboard() {
           setQuery={setQuery}
           runId={runId}
           setRunId={setRunId}
-          runOptions={runOptions}
+          runIds={runIds}          // ✅ NEW: list of UUIDs for dropdown
           header={header}
         />
 
         <div className="mt-3 text-xs text-muted-foreground">
-            Run load: <span className="font-medium">{runStatus}</span>
-            {runError ? <span className="ml-2 text-red-500">({runError})</span> : null}
-            {run?.bt ? <span className="ml-2">rows: {run.bt.length}</span> : null}
+          Run load: <span className="font-medium">{runStatus}</span>
+          {runError ? <span className="ml-2 text-red-500">({runError})</span> : null}
+          {run?.bt ? <span className="ml-2">rows: {run.bt.length}</span> : null}
         </div>
 
         <KpiRow header={header} />
@@ -291,11 +285,11 @@ export default function BacktestDashboard() {
           </TabsContent>
         </Tabs>
 
-        <div className="mt-10 text-xs text-muted-foreground">
+        {/* <div className="mt-10 text-xs text-muted-foreground">
           Data contract: run.bt rows must contain at least date, cum_ret_net, drawdown_net,
           position_lag, target_position, turnover, net_ret, strategy_ret, p_class_0/1/2, y_pred.
           Baseline.bt should include date, cum_ret_net, drawdown_net.
-        </div>
+        </div> */}
       </div>
     </div>
   );

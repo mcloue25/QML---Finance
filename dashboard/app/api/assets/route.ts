@@ -4,6 +4,8 @@ import path from "node:path";
 
 export const runtime = "nodejs";
 
+// What assets exist in my training CSV folder?
+
 const CSV_DIR = path.resolve(process.cwd(),"..", "data", "csv", "historical", "training", "cleaned");
 const PARQUET_DIR = path.resolve(process.cwd(),"..", "data", "results", "backtests");
 

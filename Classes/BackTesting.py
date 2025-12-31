@@ -312,12 +312,12 @@ class BackTest:
         }
     
 
-    def trade_list(self, bt_df, price_col=None, pos_col=None):
+    def trade_list(self,bt_df, price_col=None, pos_col=None, entry_threshold: float = 0.10, exit_threshold: float = 0.10):
         df = bt_df.copy()
 
         # Auto-detect sensible defaults
         if pos_col is None:
-            for c in ["position", "position_lag", "pos", "positions", "exposure"]:
+            for c in ["position", "position_lag", "pos", "positions", "exposure", "target_position"]:
                 if c in df.columns:
                     pos_col = c
                     break
@@ -327,30 +327,47 @@ class BackTest:
                     price_col = c
                     break
 
-        if pos_col not in df.columns:
-            raise ValueError(f"bt_df missing required column '{pos_col}'")
-        if price_col not in df.columns:
-            raise ValueError(f"bt_df missing required column '{price_col}' (or pass price_col=...)")
+        if pos_col is None or pos_col not in df.columns:
+            raise ValueError(f"bt_df missing required position column (tried common names).")
+        if price_col is None or price_col not in df.columns:
+            raise ValueError(f"bt_df missing required price column '{price_col}' (or pass price_col=...)")
 
-        pos = df[pos_col].fillna(0).astype(int)
+        # Continuous position (keep float!) and use absolute if you ever support shorts
+        pos = df[pos_col].fillna(0.0).astype(float).abs()
         price = df[price_col].astype(float)
 
-        # Entry when position goes 0->1, exit when 1->0
-        entries = (pos.shift(1, fill_value=0) == 0) & (pos == 1)
-        exits   = (pos.shift(1, fill_value=0) == 1) & (pos == 0)
+        # "In trade" when exposure is meaningfully > 0
+        in_trade = pos >= entry_threshold
+        prev_in_trade = in_trade.shift(1).fillna(False)
+
+        # Crossings define entries/exits
+        entries = in_trade & (~prev_in_trade)
+        exits = (~in_trade) & prev_in_trade  # drops below threshold
 
         entry_dates = df.index[entries]
-        exit_dates  = df.index[exits]
+        exit_dates = df.index[exits]
 
         # If we end with an open trade, close it on last bar
         if len(entry_dates) > len(exit_dates):
             exit_dates = exit_dates.append(pd.Index([df.index[-1]]))
 
         trades = []
-        for e, x in zip(entry_dates, exit_dates):
-            entry_px = price.loc[e]
-            exit_px  = price.loc[x]
+        j = 0
+        exit_dates_list = list(exit_dates)
+
+        # Pair each entry with the next exit after it
+        for e in entry_dates:
+            while j < len(exit_dates_list) and exit_dates_list[j] <= e:
+                j += 1
+            if j >= len(exit_dates_list):
+                break
+            x = exit_dates_list[j]
+            j += 1
+
+            entry_px = float(price.loc[e])
+            exit_px = float(price.loc[x])
             ret = (exit_px / entry_px) - 1.0
+
             trades.append({
                 "entry_time": e,
                 "exit_time": x,
@@ -358,10 +375,13 @@ class BackTest:
                 "exit_price": exit_px,
                 "return": ret,
                 "pnl_pct": ret * 100.0,
-                "bars_held": int((df.loc[e:x].shape[0]) - 1)
+                "bars_held": int(df.loc[e:x].shape[0] - 1),
+                "avg_exposure": float(pos.loc[e:x].mean()),
+                "max_exposure": float(pos.loc[e:x].max()),
             })
 
         return pd.DataFrame(trades)
+
 
 
 
@@ -424,12 +444,13 @@ class BackTest:
         Returns:
             Creates curves and trades parquet files
         '''
+
         base_dir = Path(base_dir)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         run_id = run_row["run_id"]
 
-        # Save run table
+        # ---- Save/append run table ----
         runs_path = base_dir / "runs.parquet"
         run_df = pd.DataFrame([run_row])
 
@@ -439,13 +460,54 @@ class BackTest:
         else:
             run_df.to_parquet(runs_path, index=False)
 
-        # Save curve/time series per run
-        curve_cols = [c for c in ["date", "equity", "returns", "drawdown", "position"] if c in bt_df.columns]
-        curve_df = bt_df[curve_cols].copy()
-        self.create_folder(f'{base_dir}/curves/')
-        curve_df.to_parquet(base_dir / "curves" / f"{run_id}.parquet", index=False)
+        # ---- Build curves DF from your bt_df schema ----
+        df = bt_df.copy()
+
+        # Ensure date column exists (your dates are likely the index)
+        if "date" not in df.columns:
+            if isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index().rename(columns={"index": "date"})
+            else:
+                raise ValueError("bt_df has no 'date' column and index is not a DatetimeIndex.")
+
+        # Standard dashboard fields
+        df["returns"] = df["net_ret"]                            # daily strategy net return (log)
+        df["equity"] = np.exp(df["cum_ret"])                     # convert cumulative log return -> equity curve
+        df["drawdown"] = df["cum_ret"] - df["cum_ret"].cummax()  # log drawdown
+        df["position"] = df["position_lag"]                      # executed position (already lagged)
+
+        curve_df = df[["date", "equity", "returns", "drawdown", "position", "run_id"]].copy()
+
+        # parquetjs-lite is much happier if date is plain string
+        curve_df["date"] = curve_df["date"].astype(str)
+
+        out_dir = base_dir / str(run_id) / "curves"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        curve_df.to_parquet(
+            out_dir / f"{run_id}.parquet",
+            index=False,
+            engine="pyarrow",
+            compression="snappy",
+            version="1.0",
+        )
+
 
         # Save Trades
-        if trades_df is not None:
-            self.create_folder(f'{base_dir}/trades/')
-            trades_df.to_parquet(base_dir / "trades" / f"{run_id}.parquet", index=False)
+        if trades_df is not None and len(trades_df) > 0:
+            trades_df = trades_df.copy()
+            if "date" in trades_df.columns:
+                trades_df["date"] = trades_df["date"].astype(str)
+
+            out_dir = base_dir / str(run_id) / "trades"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            trades_df.to_parquet(
+                out_dir / f"{run_id}.parquet",
+                index=False,
+                engine="pyarrow",
+                compression="snappy",
+                version="1.0",
+            )
+
+

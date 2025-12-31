@@ -10,8 +10,7 @@ import {
 import { Input } from "../ui/input";
 import { Search } from "lucide-react";
 import Pill from "./ui/Pill";
-import { fmtNum } from "./format";
-import type { Catalog, CatalogRunRow, HeaderVM } from "./types";
+import type { Catalog, HeaderVM } from "./types";
 
 export default function FiltersCard(props: {
   assets: string[];
@@ -23,6 +22,7 @@ export default function FiltersCard(props: {
   modelType: string;
   setModelType: (v: string) => void;
 
+  // Keeping horizon props for now (even if not used for /api/run anymore)
   horizon: number | null;
   setHorizon: (v: number) => void;
 
@@ -32,7 +32,9 @@ export default function FiltersCard(props: {
   runId: string | null;
   setRunId: (v: string) => void;
 
-  runOptions: CatalogRunRow[];
+  // ✅ NEW: UUID run ids from catalog.runs[asset][model]
+  runIds: string[];
+
   header: HeaderVM | null;
 }) {
   const {
@@ -48,7 +50,7 @@ export default function FiltersCard(props: {
     setQuery,
     runId,
     setRunId,
-    runOptions,
+    runIds,
     header,
   } = props;
 
@@ -60,7 +62,9 @@ export default function FiltersCard(props: {
             <div className="text-xs text-muted-foreground">Asset</div>
             <Select value={asset ?? ""} onValueChange={setAsset}>
               <SelectTrigger className="mt-1 rounded-2xl">
-                <SelectValue placeholder={assets.length ? "Select asset" : "Loading assets..."} />
+                <SelectValue
+                  placeholder={assets.length ? "Select asset" : "Loading assets..."}
+                />
               </SelectTrigger>
               <SelectContent>
                 {(assets || []).map((a) => (
@@ -88,6 +92,7 @@ export default function FiltersCard(props: {
             </Select>
           </div>
 
+          {/* Optional: you can remove this entirely if horizons no longer exist in your world */}
           <div className="md:col-span-2">
             <div className="text-xs text-muted-foreground">Horizon</div>
             <Select
@@ -98,40 +103,39 @@ export default function FiltersCard(props: {
                 <SelectValue placeholder="h" />
               </SelectTrigger>
               <SelectContent>
-                {(catalog?.horizons || []).map((h) => (
+                {(catalog as any)?.horizons?.map?.((h: number) => (
                   <SelectItem key={h} value={String(h)}>
                     h={h}
                   </SelectItem>
-                ))}
+                )) || null}
               </SelectContent>
             </Select>
           </div>
 
           <div className="md:col-span-4">
-            <div className="text-xs text-muted-foreground">
-              Run (sorted by annual return)
-            </div>
+            <div className="text-xs text-muted-foreground">Run (UUID)</div>
+
             <div className="mt-1 flex items-center gap-2">
               <div className="relative w-full">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   className="w-full rounded-2xl pl-10"
-                  placeholder="Search feature set / notes…"
+                  placeholder="Search run UUID…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
+
               <Select value={runId || ""} onValueChange={setRunId}>
                 <SelectTrigger className="w-[240px] rounded-2xl">
-                  <SelectValue placeholder="Select run" />
+                  <SelectValue
+                    placeholder={runIds.length ? "Select run" : "No runs found"}
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {runOptions.map((r) => (
-                    <SelectItem key={r.run_id} value={r.run_id}>
-                      {`${r.run_id.slice(0, 8)} • ${r.feature_set || "feat"} • SR ${fmtNum(
-                        r.sharpe,
-                        2
-                      )}`}
+                  {runIds.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      <span title={id}>{id.slice(0, 8)}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -139,16 +143,6 @@ export default function FiltersCard(props: {
             </div>
           </div>
         </div>
-
-        {header ? (
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <Pill>{header.model}</Pill>
-            <Pill>Features: {header.featureSet}</Pill>
-            <Pill>Test: {header.period}</Pill>
-            <Pill>Costs: {header.costs}</Pill>
-            <Pill variant="soft">{header.policy}</Pill>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );
