@@ -10,7 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Optional, Literal
 
-def pretty_print_json(obj: dict) -> None:
+def pretty_print_json(obj: dict):
     '''Pretty print a dict as JSON.'''
     print(json.dumps(obj, indent=4, default=str))
 
@@ -27,20 +27,19 @@ class BacktestConfig:
 
 
 class BackTest:
-    ''' Backtesting utility for buy/hold/sell ML signals.
-
+    """ Backtesting utility for regime/action predictions (sell/hold/buy) with realistic execution.
     Expected inputs:
       - preds_df: DataFrame indexed by date with at least:
-          * 'y_pred' in {0,1,2} (sell/hold/buy)
-        Optional columns:
-          * 'p_class_0','p_class_1','p_class_2' for probability-based rules later
+          * y_pred in {0,1,2} (sell/hold/buy)
+        Optional (required for probability-weighted sizing):
+          * p_class_0, p_class_1, p_class_2
 
-      - prices: Series indexed by date (same calendar as preds_df). Close is fine.
+      - prices: Series indexed by date with matching calendar to preds_df
 
     Outputs:
-      - a backtest DataFrame containing returns, positions, costs, equity curve
-      - a metrics dict
-    '''
+      - bt_df: DataFrame with returns, positions, turnover, costs, equity curve
+      - metrics: dict of risk/return statistics (separate helper)
+    """
 
     def __init__(self, path: Optional[str] = None, config: Optional[BacktestConfig] = None):
         self.path = path
@@ -53,10 +52,10 @@ class BackTest:
         os.makedirs(folder_name, exist_ok=True)
     
 
-    # ---------- Data prep ----------
+    # Data prep
     @staticmethod
     def ensure_datetime_index(df_or_s: pd.DataFrame | pd.Series):
-        ''' Data  Prep
+        ''' Ensure time-series index is a DatetimeIndex and sorted chronologically for time-series correctness.
         '''
         if not isinstance(df_or_s.index, pd.DatetimeIndex):
             df_or_s = df_or_s.copy()
@@ -66,26 +65,25 @@ class BackTest:
 
     @staticmethod
     def compute_log_returns(prices: pd.Series):
-        ''' Daily log returns. (Works well for additive cumulation.)
+        ''' Compute daily log returns
         '''
         return np.log(prices).diff()
 
 
     def baseline_buy_and_hold(self, prices: pd.Series, start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
-        ''' Construct a buy-and-hold baseline equity curve.
+        ''' Buy-and-hold baseline equity curve (always fully invested).
         Args:
-            prices (pd.Series) : Price series indexed by date used to compute daily log returns.
-            start (pd.Timestamp) : Optional start date for the backtest window. If provided, performance is evaluated only from this date onward.
-            end (pd.Timestamp, optional): Optional end date for the backtest window. If provided, performance is evaluated only up to this date.
+            prices: Price series indexed by date.
+            start/end: Optional evaluation window bounds.
+
         Returns:
-            pd.DataFrame:
-                DataFrame indexed by date containing:
-                - ret: daily log returns of the asset
-                - position_lag: constant exposure (1.0 = fully invested)
-                - strategy_ret: daily strategy returns
-                - cost: transaction costs (zero for buy-and-hold)
-                - net_ret: returns after costs
-                - cum_ret: cumulative log return
+            DataFrame indexed by date with:
+              - ret: asset daily log return
+              - position_lag: fixed exposure (1.0)
+              - strategy_ret: position * ret
+              - cost: transaction costs (0 for buy/hold)
+              - net_ret: strategy_ret - cost
+              - cum_ret: cumulative log return
         '''
         # Chronological ordering and DatetimeIndex
         prices = self.ensure_datetime_index(prices)
@@ -115,7 +113,7 @@ class BackTest:
 
     # def map_actions_to_position(self, y_pred: pd.Series) -> pd.Series:
     #     ''' BINARY EXPOSURE
-    #         Signal --> position  
+    #         Signal > position  
     #         Map action classes to target position.
     #         Default: long-only (sell/hold => flat, buy => long).
     #         Optional: long-short (sell => -1, hold => 0, buy => +1).
@@ -130,10 +128,18 @@ class BackTest:
 
     def probability_weighted_position(self,df: pd.DataFrame, threshold: float = 0.20, vol_window: int = 20, use_vol_scaling: bool = True):
         ''' Long-only probability-weighted position sizing.
-            - signal = p_buy - p_sell
-            - pos = clip(signal, 0, 1)
-            - threshold: ignore weak signals
-            - optional vol scaling: reduce exposure when volatility is high
+        Core idea:
+            signal = p_buy - p_sell
+            pos = clip(signal, 0, 1)
+            + thresholding (ignore weak/conflicted signals)
+            + optional volatility scaling (reduce exposure in high-vol regimes)
+        Args:
+            df: DataFrame containing p_class_2 (buy prob) and p_class_0 (sell prob) and optionally 'ret' if vol scaling is enabled.
+            threshold: minimum (p_buy - p_sell) required to take exposure
+            vol_window: rolling window for realized volatility estimate
+            use_vol_scaling: if True, scale exposure down when vol is elevated
+        Returns:
+            pd.Series of target positions in [0,1]
         '''
         required = {"p_class_2", "p_class_0"}
         missing = required - set(df.columns)
@@ -165,15 +171,18 @@ class BackTest:
 
 
 
-    def apply_hold_rule(self, target_pos: pd.Series) -> pd.Series:
-        ''' Convert target positions to executed positions depending on hold rule.
-            - signal_until_change: follow latest signal daily
-            - fixed_horizon: enter and hold for horizon_days after a non-zero signal
+    def apply_hold_rule(self, target_pos: pd.Series):
+        ''' Convert target positions into executed target positions based on hold rule.
+            - signal_until_change:
+                Follow the latest target position daily (before lagging).
+            - fixed_horizon:
+                When a non-zero target position appears, hold it for horizon_days
+                regardless of intermediate target changes.
         '''
         if self.config.hold_rule == "signal_until_change":
             return target_pos
 
-        # fixed_horizon: very simple implementation
+        # Fixed-horizon: simple state machine
         h = self.config.horizon_days
         pos = target_pos.copy()
         executed = pd.Series(0.0, index=pos.index)
@@ -181,18 +190,20 @@ class BackTest:
         holding = 0
         current = 0.0
         for i, (dt, p) in enumerate(pos.items()):
+            # If currently holding a position, keep it until timer expires
             if holding > 0:
                 executed.iloc[i] = current
                 holding -= 1
                 continue
 
-            # If new signal is non-zero, enter for h days; otherwise stay flat
+            # If a new non-zero signal appears, enter and hold for h days
             if p != 0.0:
                 current = p
                 holding = h
                 executed.iloc[i] = current
                 holding -= 1
             else:
+                # Otherwise remain flat
                 current = 0.0
                 executed.iloc[i] = 0.0
 
@@ -203,39 +214,44 @@ class BackTest:
 
     # NOTE - Main backtest
     def run(self, preds_df: pd.DataFrame, prices: pd.Series) -> pd.DataFrame:
-        ''' Run backtest using preds_df actions against a price series.
-
-            Notes for horizon=10:
-            - Prediction at time t must only use info available at t.
-            - We shift positions by 1 day to simulate entering at t+1 (no look-ahead).
+        ''' Run backtest using model predictions against a price series.
+            Key time-series correctness constraint:
+            - Position is shifted by 1 day (decision at t executed at t+1)
+            - Prevents look-ahead bias and mimics realistic order placement.
+        Args:
+            preds_df: indexed by date, contains y_pred and/or class probabilities
+            prices: indexed by date, price series
+        Returns:
+            bt_df: DataFrame containing returns, positions, turnover, costs, cum returns
         '''
         preds_df = self.ensure_datetime_index(preds_df)
         prices = self.ensure_datetime_index(prices)
 
-        # Align to common dates
+        # Align both inputs to the same trading calendar
         df = preds_df.copy()
         df = df.join(prices.rename("price"), how="inner")
 
-        # Returns
+        # Compute daily log returns
         df["ret"] = self.compute_log_returns(df["price"])
         df = df.dropna(subset=["ret", "y_pred"])
 
-        # Positions
-        # df["target_position"] = self.map_actions_to_position(df["y_pred"])
+        # Build target position from probabilities (policy layer)
         df["target_position"] = self.probability_weighted_position(df)
         df["target_position"] = self.apply_hold_rule(df["target_position"])
 
-        # Shift to avoid look-ahead: position decided at t applied from t+1
+        # Execution lag: today's signal becomes tomorrow's position
         df["position_lag"] = df["target_position"].shift(1).fillna(0.0)
 
-        # Strategy gross return
+        # Strategy gross returns = exposure * asset return
         df["strategy_ret"] = df["position_lag"] * df["ret"]
 
-        # Transaction costs on turnover (absolute change in position)
+        # Turnover = absolute change in exposure (proxy for trading activity)
         df["turnover"] = df["position_lag"].diff().abs().fillna(0.0)
+
+        # Transaction costs proportional to turnover
         df["cost"] = df["turnover"] * self.config.transaction_cost
 
-        # Net return + equity curve (log space)
+        # Net returns after costs + cumulative log equity curve
         df["net_ret"] = df["strategy_ret"] - df["cost"]
         df["cum_ret"] = df["net_ret"].cumsum()
 
@@ -245,20 +261,23 @@ class BackTest:
     # NOTE - Calculating Performance Metrics
     @staticmethod
     def performance_metrics(bt_df: pd.DataFrame, ann_factor: int = 252):
-        ''' Compute performance metrics from the backtest DataFrame.
+        ''' Compute standard performance statistics.
+        Notes:
+          - Using log returns: annual_return approximated by mean(log_ret)*252
+          - cum_ret is cumulative log return (equity = exp(cum_ret))
+          - drawdown computed in log space (consistent with cum_ret)
         '''
         total_return = float(bt_df["cum_ret"].iloc[-1])
         ann_return = float(bt_df["net_ret"].mean() * ann_factor)
         ann_vol = float(bt_df["net_ret"].std(ddof=0) * np.sqrt(ann_factor))
         sharpe = float(ann_return / ann_vol) if ann_vol > 0 else 0.0
 
-        # Max drawdown computed on cumulative log return curve
+        # Log drawdown from peak cumulative log return
         dd = bt_df["cum_ret"] - bt_df["cum_ret"].cummax()
         max_dd = float(dd.min())
 
         avg_turnover = float(bt_df["turnover"].mean() * ann_factor)
         hit_rate = float((bt_df["net_ret"] > 0).mean())
-
         pct_in_market = float((bt_df["position_lag"].abs() > 0).mean())
 
         return {
@@ -275,9 +294,9 @@ class BackTest:
 
     @staticmethod
     def trade_stats(bt_df: pd.DataFrame, entry_threshold: float = 0.10):
-        ''' Trade stats for continuous positions by defining a 'trade' as being meaningfully invested.
-            Entry: position_lag crosses from < entry_threshold to >= entry_threshold
-            Exit : position_lag crosses from >= entry_threshold to < entry_threshold
+        ''' Trade stats for continuous positions by defining a "trade" as being meaningfully invested.
+        Entry: position_lag crosses from < threshold to >= threshold
+        Exit : position_lag crosses from >= threshold to < threshold
         '''
         pos = bt_df["position_lag"].fillna(0.0).abs()
 
@@ -313,9 +332,17 @@ class BackTest:
     
 
     def trade_list(self,bt_df, price_col=None, pos_col=None, entry_threshold: float = 0.10, exit_threshold: float = 0.10):
+        ''' Build a trade list from continuous exposure by thresholding exposure.
+        Args:
+            bt_df: backtest DataFrame output from run()
+            price_col: optional override for price column name
+            pos_col: optional override for position column name
+            entry_threshold: exposure threshold to define entering a trade
+            exit_threshold: currently unused (exit defined by dropping below threshold)
+        '''
         df = bt_df.copy()
 
-        # Auto-detect sensible defaults
+        # Auto-detect columns if not specified
         if pos_col is None:
             for c in ["position", "position_lag", "pos", "positions", "exposure", "target_position"]:
                 if c in df.columns:
@@ -328,26 +355,26 @@ class BackTest:
                     break
 
         if pos_col is None or pos_col not in df.columns:
-            raise ValueError(f"bt_df missing required position column (tried common names).")
+            raise ValueError("bt_df missing required position column (tried common names).")
         if price_col is None or price_col not in df.columns:
             raise ValueError(f"bt_df missing required price column '{price_col}' (or pass price_col=...)")
 
-        # Continuous position (keep float!) and use absolute if you ever support shorts
+        # Use abs exposure so this works even if you later support shorts
         pos = df[pos_col].fillna(0.0).astype(float).abs()
         price = df[price_col].astype(float)
 
-        # "In trade" when exposure is meaningfully > 0
+        # Threshold-defined trade state
         in_trade = pos >= entry_threshold
         prev_in_trade = in_trade.shift(1).fillna(False)
 
         # Crossings define entries/exits
         entries = in_trade & (~prev_in_trade)
-        exits = (~in_trade) & prev_in_trade  # drops below threshold
+        exits = (~in_trade) & prev_in_trade
 
         entry_dates = df.index[entries]
         exit_dates = df.index[exits]
 
-        # If we end with an open trade, close it on last bar
+        # If last trade still open, close at final bar
         if len(entry_dates) > len(exit_dates):
             exit_dates = exit_dates.append(pd.Index([df.index[-1]]))
 
@@ -361,6 +388,7 @@ class BackTest:
                 j += 1
             if j >= len(exit_dates_list):
                 break
+
             x = exit_dates_list[j]
             j += 1
 
@@ -387,7 +415,8 @@ class BackTest:
 
     @staticmethod
     def plot_equity_curve(bt_df: pd.DataFrame, title: str = "Strategy Equity Curve", show:bool=False, save_path=None):
-        '''Plot cumulative log returns.'''
+        ''' Plot cumulative log returns (equity in log space)
+        '''
         plt.figure(figsize=(12, 5))
         plt.plot(bt_df.index, bt_df["cum_ret"], label="Strategy (log cum ret)")
         plt.title(title)
@@ -401,9 +430,11 @@ class BackTest:
             plt.savefig(save_path)
         plt.close()
 
+
     @staticmethod
     def plot_positions(bt_df: pd.DataFrame, title: str = "Position Over Time", show:bool=False, save_path=None):
-        '''Plot held position over time.'''
+        ''' Plot executed position over time (lagged exposure)
+        '''
         plt.figure(figsize=(12, 3))
         plt.plot(bt_df.index, bt_df["position_lag"], linewidth=1)
         plt.title(title)
@@ -442,15 +473,15 @@ class BackTest:
             bt_df (DataFrame) : DF containing backtest results
             trades_df (Bool) : Bool to save trades or not
         Returns:
-            Creates curves and trades parquet files
+            runs.parquet: metadata / summary metrics table (append-only)
+            curves/{run_id}.parquet: per-day curve data (equity, returns, drawdown, position)
+            trades/{run_id}.parquet: optional trade list
         '''
-
         base_dir = Path(base_dir)
         base_dir.mkdir(parents=True, exist_ok=True)
-
         run_id = run_row["run_id"]
 
-        # ---- Save/append run table ----
+        #  Save/append run table 
         runs_path = base_dir / "runs.parquet"
         run_df = pd.DataFrame([run_row])
 
@@ -460,7 +491,7 @@ class BackTest:
         else:
             run_df.to_parquet(runs_path, index=False)
 
-        # ---- Build curves DF from your bt_df schema ----
+        #  Build curves DF from your bt_df schema 
         df = bt_df.copy()
 
         # Ensure date column exists (your dates are likely the index)
@@ -470,20 +501,22 @@ class BackTest:
             else:
                 raise ValueError("bt_df has no 'date' column and index is not a DatetimeIndex.")
 
-        # Standard dashboard fields
-        df["returns"] = df["net_ret"]                            # daily strategy net return (log)
-        df["equity"] = np.exp(df["cum_ret"])                     # convert cumulative log return -> equity curve
-        df["drawdown"] = df["cum_ret"] - df["cum_ret"].cummax()  # log drawdown
-        df["position"] = df["position_lag"]                      # executed position (already lagged)
+         # Daily strategy net return (log)
+        df["returns"] = df["net_ret"]
+        # convert cumulative log return -> equity curve
+        df["equity"] = np.exp(df["cum_ret"])
+        # log drawdown
+        df["drawdown"] = df["cum_ret"] - df["cum_ret"].cummax()
+        # Executed position
+        df["position"] = df["position_lag"]
 
         curve_df = df[["date", "equity", "returns", "drawdown", "position", "run_id"]].copy()
-
-        # parquetjs-lite is much happier if date is plain string
+        # convert date to string for parquetjs-lite 
         curve_df["date"] = curve_df["date"].astype(str)
-
         out_dir = base_dir / str(run_id) / "curves"
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Save curve DF
         curve_df.to_parquet(
             out_dir / f"{run_id}.parquet",
             index=False,
@@ -491,7 +524,6 @@ class BackTest:
             compression="snappy",
             version="1.0",
         )
-
 
         # Save Trades
         if trades_df is not None and len(trades_df) > 0:
@@ -509,5 +541,3 @@ class BackTest:
                 compression="snappy",
                 version="1.0",
             )
-
-

@@ -13,81 +13,7 @@ from Classes.FeatureExtraction.FeatureEngineering import FeatureBuilder
 
 # Load model architectures for testing
 from Classes.ModelArchitectures.TreeEnsemble import *
-
-
-
-def run_full_pipeline():
-    '''  
-    '''
-    ticker_list = [
-        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    ]
-
-    download_path = 'data/csv/historical/training/raw/'
-
-    # Download all ticker data
-    # download_data(ticker_list, period="max", output_path=download_path)
-
-    # Geneerate features for all downloaded ticker data
-    # feature_engineering(download_path, output_path='data/csv/historical/training/cleaned/')
- 
-    for stock_name in ticker_list:
-        # Analyse Feature importance for modelling
-        key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
-
-        # Train ensemble models
-        ensemble_model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features)
-
-        # Perform backtest
-        backtest_model_performance(parquet_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
-                                   model_type='xgb',
-                                   stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-                                   stock_name=stock_name,
-                                   backtest_output_path="data/results/backtests/")
-    
-
-
-def split_train_val_test(file_path: str, feature_cols: list, target_col: str):
-    ''' Function for taking a csv and converting it into an X & y dataset
-    Args:
-        file_path (String) : Path to CSV file
-        feature_cols (List) : Subset of cols to keep from CSV
-        target_col (String) : Target column we're trying to rpedict
-    Returns:
-        X (Tensor) : X data
-        y (Tensor) : y data
-        dates (Tensor) : date data
-    '''
-    df = pd.read_csv(file_path)
-
-    # keep date index for ordering/alignment, but not as a feature
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").set_index("date")
-
-    # subset to needed columns and drop rows with missing values
-    cols = feature_cols + [target_col]
-    df = df[cols].dropna()
-
-    X = df[feature_cols].to_numpy()
-    y = df[target_col].to_numpy().astype(int)
-    dates = df.index.to_numpy()
-
-    return X, y, dates
-
-
-
-def time_train_test_split(X, y, dates, test_size=0.2):
-    n = len(y)
-    cut = int(n * (1 - test_size))
-
-    X_dev, X_test = X[:cut], X[cut:]
-    y_dev, y_test = y[:cut], y[cut:]
-    dates_dev, dates_test = dates[:cut], dates[cut:]
-
-    return X_dev, y_dev, dates_dev, X_test, y_test, dates_test
-
-
+from Classes.ModelArchitectures.QuantumModels import *
 
 
 
@@ -105,7 +31,6 @@ def download_data(ticker_list:list, period:str, output_path:str):
 
 
 
-
 def feature_engineering(folder_path:str, output_path:str=None):
     '''  
     '''
@@ -114,7 +39,6 @@ def feature_engineering(folder_path:str, output_path:str=None):
         fb = FeatureBuilder(csv_path=f'{folder_path}{file}', output_path=output_path)
         fb.generate_features(build='core')
         fb.df.to_csv(f'{output_path}{file}')
-
 
 
 
@@ -177,30 +101,221 @@ def feature_analysis(input_path:str, stock:str=None):
 
 
 
-def ensemble_model_training(csv_path:str, stock_name:str, feat_list=None):
-    ''' Main function for calling trianing pipelines for different kinds of models
+def split_train_val_test(file_path: str, feature_cols: list, target_col: str):
+    ''' Function for taking a csv and converting it into an X & y dataset
+    Args:
+        file_path (String) : Path to CSV file
+        feature_cols (List) : Subset of cols to keep from CSV
+        target_col (String) : Target column we're trying to rpedict
+    Returns:
+        X (Tensor) : X data
+        y (Tensor) : y data
+        dates (Tensor) : date data
+    '''
+    df = pd.read_csv(file_path)
+
+    # keep date index for ordering/alignment, but not as a feature
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").set_index("date")
+
+    # subset to needed columns and drop rows with missing values
+    cols = feature_cols + [target_col]
+    df = df[cols].dropna()
+
+    X = df[feature_cols].to_numpy()
+    y = df[target_col].to_numpy().astype(int)
+    dates = df.index.to_numpy()
+
+    return X, y, dates
+
+
+
+def time_train_test_split(X, y, dates, test_size=0.2):
+    n = len(y)
+    cut = int(n * (1 - test_size))
+
+    X_dev, X_test = X[:cut], X[cut:]
+    y_dev, y_test = y[:cut], y[cut:]
+    dates_dev, dates_test = dates[:cut], dates[cut:]
+
+    return X_dev, y_dev, dates_dev, X_test, y_test, dates_test
+
+
+
+
+
+def run_full_pipeline():
+    ''' Function to run the entire pipeline for all stocks from ends to end 
+        Does:
+            * Downloads all stock tickers
+            * Generates Features
+            * Assesses Relevance of generated features & keeps only core featureset
+            * Trains Ensemble & Quantum models & saves results to parquet file
+            * Backtests model pereofrmance against time-series-correct data
 
     '''
-    # Load and split dataset keeping only key features found trough feature analysis
-    X, y, dates = split_train_val_test(
-        file_path=csv_path, 
-        feature_cols=feat_list, 
-        target_col='signal_voladj_10d'
-    )
-    create_folder(f'data/results/ensembles/{stock_name}/')
+    ticker_list = [
+        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+    ]
+    # ticker_list = ["BTC-USD"]
 
-    # X, y already aligned for a given horizon (e.g. y_20)
+    download_path = 'data/csv/historical/training/raw/'
+
+    # Download all ticker data
+    # download_data(ticker_list, period="max", output_path=download_path)
+
+    # Geneerate features for all downloaded ticker data
+    # feature_engineering(download_path, output_path='data/csv/historical/training/cleaned/')
+    
+    features_dict = {}
+    for stock_name in ticker_list:
+        # Analyse Feature importance for modelling
+        key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
+        features_dict[stock_name] = key_features
+        
+        # NOTE - Main functionf or training classical & quantum models
+        model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features)
+
+
+    ''' Get model before archtype
+        Might have to move this around so its:
+            * stock_name/arch_type (ensemble vs qml) / arch_type / .parquet file
+        
+    '''
+    for arch_type in os.listdir('data/results/trained_models/'):
+        for model_type in os.listdir(f'data/results/trained_models/{arch_type}/'):
+            
+
+            Perform backtest              f'data/results/trained_models/{arch_type}/{model_type}/'
+            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
+                                    # This is causing the ISSUE Need to iterate over possible model Architectures
+                                    model_type='xgb',
+                                    stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
+                                    stock_name=stock_name,
+                                    backtest_output_path="data/results/backtests/"
+
+
+            # # Perform backtest
+            # backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
+            #                         # This is causing the ISSUE Need to iterate over possible model Architectures
+            #                         model_type='xgb',
+            #                         stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
+            #                         stock_name=stock_name,
+            #                         backtest_output_path="data/results/backtests/"
+
+
+        # backtest_model_performance(parquet_path=f'data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C10.0/QKernelSVC_depth2_C10.0.parquet', 
+        #                         # This is causing the ISSUE Need to iterate over possible model Architectures
+        #                            model_type='QKernelSVC_depth2_C10.0',
+        #                            stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
+        #                            stock_name=stock_name,
+        #                            backtest_output_path="data/results/backtests/")
+    
+    # save_JSON_object(features_dict, 'data/json/stock_key_features.json')
+    
+
+
+
+
+def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10):
+    ''' Main function for training different models on the same data
+    Args:
+        csv_path (String) : PAth to historical data CSV 
+        stock_name (String) : Name of stock being modelled
+        feat_list (List) : List of key features after feature improtance pipeline has been applied
+    '''
+    # Load dataset
+    X, y, dates = split_train_val_test(
+        file_path=csv_path,
+        feature_cols=feat_list,
+        target_col="signal_voladj_10d"
+    )
+
+    # Dev/Test split keeping in chronological
     X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
 
-    # Train LGBM Classifier
+    # Create splits to be used by classicial DL and QML modelling
+    splits = make_walkforward_splits(X_dev, n_splits=5, gap=horizon)
+
+    # NOTE - Train ensembles
+    ensemble_model_training(
+        stock_name=stock_name, 
+        X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev, 
+        X_test=X_test, y_test=y_test, dates_test=dates_test, 
+        splits=splits
+    )
+
+    # NOTE - Train quantum model using same splits
+    # quantum_model_training(
+    #     stock_name=stock_name,
+    #     X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev,
+    #     X_test=X_test, y_test=y_test, dates_test=dates_test,
+    #     splits=splits
+    # )
+
+
+
+
+def ensemble_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits):
+    '''  Mian fucntion for training ensemble models to compare against QML counterparts
+    '''
+    create_folder(f"data/results/trained_models/ensembles/{stock_name}/")
+
+    # LGBM
     lgbm = load_LGBM_Classifier()
-    lgbm_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test, gap=10)
-    analyse_ensemble_results(lgbm_results, y_test, dates_dev, y_dev, 'LGBM_V1', output_path=f'data/results/ensembles/{stock_name}/LGBM_V1/')
-    
-    # Train XGBoost Classifier
+    lgbm_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test, splits)
+    analyse_ensemble_results(
+        lgbm_results, y_test, dates_dev, y_dev,
+        "LGBM_V1",
+        output_path=f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/"
+    )
+
+    # XGBoost
     xgb = loadXGBoost_Classifier()
-    xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test)
-    analyse_ensemble_results(xgb_results, y_test, dates_dev, y_dev, 'XGBoost_V1', output_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/')
+    xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test, splits)
+    analyse_ensemble_results(
+        xgb_results, y_test, dates_dev, y_dev,
+        "XGBoost_V1",
+        output_path=f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/"
+    )
+
+
+
+def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), model_tag="QKernelSVC_V1"):
+    create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
+
+    cache = KernelCache()
+    all_results = []
+
+    for C in Cs:
+        results = quantum_kernel_train_loop(
+            X_dev, y_dev, X_test, y_test, splits,
+            depth=depth,
+            C=C,
+            model_tag=f"QKernelSVC_depth{depth}_C{C}",
+            cache=cache,
+            stock_name=stock_name,  # used for safe cache keys
+        )
+        all_results.append(results)
+
+        # Option A: analyze each run immediately
+        analyse_ensemble_results(
+            results, y_test, dates_dev, y_dev, results["model_tag"],
+            output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/"
+        )
+    cache.clear() 
+
+    # Option B: also pick and report best (example: lowest CV logloss)
+    best = min(all_results, key=lambda r: r["cv_logloss_mean"])
+    print(f"Best QML run: {best['model_tag']} | CV logloss mean={best['cv_logloss_mean']:.4f}")
+
+    return all_results, best
+
+
+
+
+
 
 
 
@@ -262,11 +377,13 @@ def run_backtests():
         "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
     ]
     for stock_name in ticker_list:
-        backtest_model_performance(parquet_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
+        backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
                                     model_type='xgb',
                                     stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
                                     stock_name=stock_name,
                                     backtest_output_path="data/results/backtests/")
+
+
 
 
 
@@ -285,20 +402,23 @@ def main():
     '''
 
     # NOTE - For running the entire pipelien in plan above 
-    # run_full_pipeline()
+    run_full_pipeline()
 
 
-    run_backtests()
+    # run_backtests()
 
     # NOTE - TESTING
     # stock_name='BTC-USD'
-    # backtest_model_performance(parquet_path=f'data/results/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
+    # backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
     #                             model_type='xgb',
     #                             stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
     #                             stock_name=stock_name,
     #                             backtest_output_path="data/results/backtests/")
 
 
+    # features_dict = load_JSON_object('data/json/stock_key_features.json')
+    # stock_name='BTC-USD'
+    # quantum_model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', feat_list=features_dict[stock_name])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,184 @@
+C:\Users\eoinm\projects\QML---Finance>python main.py
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\pennylane\__init__.py:209: RuntimeWarning: PennyLane is not yet compatible with JAX versions > 0.6.2. You have version 0.7.1 installed. Please downgrade JAX to 0.6.2 to avoid runtime errors using python -m pip install jax~=0.6.0 jaxlib~=0.6.0
+  warnings.warn(
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\statsmodels\regression\linear_model.py:1784: RuntimeWarning: invalid value encountered in scalar divide
+  return 1 - self.ssr/self.uncentered_tss
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\statsmodels\regression\linear_model.py:1784: RuntimeWarning: invalid value encountered in scalar divide
+  return 1 - self.ssr/self.uncentered_tss
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\statsmodels\regression\linear_model.py:1784: RuntimeWarning: invalid value encountered in scalar divide
+  return 1 - self.ssr/self.uncentered_tss
+Core Features:
+downside_vol_20d               2
+drawdown                       3
+log_volume_z_20d               2
+max_drawdown_252d              1
+price_ma_ratio_20d_centered    3
+price_ma_ratio_60d_centered    2
+rolling_mean_return_10d        3
+rolling_mean_return_20d        3
+rolling_mean_return_5d         3
+skew_60d                       1
+time_since_peak                1
+vol_of_vol_20d                 1
+volatility_20d                 3
+volatility_60d                 1
+dtype: int64
+Corr DF:
+                             drawdown  price_ma_ratio_20d_centered  rolling_mean_return_10d  rolling_mean_return_20d  rolling_mean_return_5d  volatility_20d
+drawdown                     1.000000                     0.308167                 0.262886                 0.337642                0.198357       -0.050719
+price_ma_ratio_20d_centered  0.308167                     1.000000                 0.921238                 0.868305                0.764432       -0.094373
+rolling_mean_return_10d      0.262886                     0.921238                 1.000000                 0.727311                0.717160       -0.088317
+rolling_mean_return_20d      0.337642                     0.868305                 0.727311                 1.000000                0.523699       -0.133778
+rolling_mean_return_5d       0.198357                     0.764432                 0.717160                 0.523699                1.000000       -0.056217
+volatility_20d              -0.050719                    -0.094373                -0.088317                -0.133778               -0.056217        1.000000
+----------------------------------------
+coef_analysis:
+                       feature   coef_5d  coef_10d  coef_20d  sign_consistent  mean_abs_coef
+0      rolling_mean_return_10d  0.162547 -0.146352 -0.109043            False       0.139314
+1  price_ma_ratio_20d_centered -0.201958  0.011275  0.257702            False       0.156978
+2               volatility_20d  0.110322  0.055666 -0.200984            False       0.122324
+3              time_since_peak  0.010673  0.011296 -0.002941            False       0.008303
+4             log_volume_z_20d  0.014377 -0.028249 -0.022587            False       0.021738
+{
+    "rolling_mean_return_10d": 1.0,
+    "price_ma_ratio_20d_centered": 0.3436532507739936,
+    "volatility_20d": 0.037770897832817084,
+    "time_since_peak": 0.02291021671826578,
+    "log_volume_z_20d": 0.024767801857584742
+}
+----------------------------------------
+KEPT FEATURES:
+['rolling_mean_return_10d', 'volatility_20d', 'time_since_peak', 'log_volume_z_20d']
+
+DROPPED FEATURES:
+price_ma_ratio_20d_centered --> {'dropped_in_favor_of': 'rolling_mean_return_10d', 'abs_corr': 0.9212383774507309, 'importance_ratio': 0.3436532507739936}
+----------------------------------------
+Final Result
+----------------------------------------
+STABILITY DF:
+                             mean_importance  std_importance  stability_ratio stability_class
+rolling_mean_return_10d             0.326442        0.018827        17.339128            keep
+price_ma_ratio_20d_centered         0.069458        0.025364         2.738456     conditional
+volatility_20d                      0.044334        0.018859         2.350806     conditional
+log_volume_z_20d                    0.003104        0.003997         0.776602            drop
+time_since_peak                     0.001757        0.004522         0.388513            drop
+----------------------------------------
+ROLE DF:
+                       feature    imp_5d   imp_10d   imp_20d
+0      rolling_mean_return_10d  0.033333  0.262602  0.034146
+1  price_ma_ratio_20d_centered  0.120325  0.090244  0.246016
+2               volatility_20d  0.043089  0.009919  0.044390
+3              time_since_peak -0.000813  0.006016 -0.001138
+4             log_volume_z_20d  0.015772  0.006504 -0.001138
+[QKernelSVC_depth2_C0.1] DEV samples: 3,281 | TEST samples: 821
+[QKernelSVC_depth2_C0.1] CV folds: 5 | depth=2 | C=0.1
+
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 1: macroF1=0.6908 ::: log_loss=0.6830
+QML Walk-Forward CV:  20%|██████████████████████████████▏                                                                                                                        | 1/5 [09:35<38:20, 575.15s/it]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 2: macroF1=0.6688 ::: log_loss=0.7692
+QML Walk-Forward CV:  40%|████████████████████████████████████████████████████████████                                                                                          | 2/5 [35:18<57:13, 1144.57s/it]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 3: macroF1=0.7388 ::: log_loss=0.6616
+QML Walk-Forward CV:  60%|███████████████████████████████████████████████████████████████████████████████████████▌                                                          | 3/5 [1:23:34<1:04:48, 1944.48s/it]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 4: macroF1=0.7560 ::: log_loss=0.5818
+QML Walk-Forward CV:  80%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▍                             | 4/5 [2:40:32<49:59, 2999.73s/it]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 5: macroF1=0.7371 ::: log_loss=0.6671
+QML Walk-Forward CV: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [4:33:53<00:00, 3286.61s/it]
+C:\Users\eoinm\projects\QML---Finance\Classes\ModelArchitectures\QuantumModels.py:197: RuntimeWarning: invalid value encountered in cast
+  return oof_pred.astype(int), oof_proba, hist, cache
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+
+[QKernelSVC_depth2_C0.1] TEST macroF1: 0.7403
+[QKernelSVC_depth2_C0.1] TEST log loss: 0.6352
+[QKernelSVC_depth2_C0.1] Runtime: 27424.3s
+dict_keys(['oof_pred', 'oof_proba', 'hist', 'test_proba', 'test_pred', 'test_f1', 'test_loss', 'cv_macro_f1_mean', 'cv_macro_f1_std', 'cv_logloss_mean', 'cv_logloss_std', 'runtime_sec', 'model_tag', 'qml_depth', 'qml_C'])
+
+[QKernelSVC_depth2_C1.0] DEV samples: 3,281 | TEST samples: 821
+[QKernelSVC_depth2_C1.0] CV folds: 5 | depth=2 | C=1.0
+
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 1: macroF1=0.7335 ::: log_loss=0.6253
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 2: macroF1=0.6866 ::: log_loss=0.7415
+QML Walk-Forward CV:  40%|████████████████████████████████████████████████████████████▊                                                                                           | 2/5 [00:00<00:00, 15.87it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 3: macroF1=0.7633 ::: log_loss=0.6384
+QML Walk-Forward CV:  40%|████████████████████████████████████████████████████████████▊                                                                                           | 2/5 [00:00<00:00, 15.87it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 4: macroF1=0.7528 ::: log_loss=0.5857
+QML Walk-Forward CV:  80%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▌                              | 4/5 [00:00<00:00,  7.52it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 5: macroF1=0.7373 ::: log_loss=0.6657
+QML Walk-Forward CV: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:00<00:00,  5.46it/s]
+C:\Users\eoinm\projects\QML---Finance\Classes\ModelArchitectures\QuantumModels.py:197: RuntimeWarning: invalid value encountered in cast
+  return oof_pred.astype(int), oof_proba, hist, cache
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+
+[QKernelSVC_depth2_C1.0] TEST macroF1: 0.7483
+[QKernelSVC_depth2_C1.0] TEST log loss: 0.6357
+[QKernelSVC_depth2_C1.0] Runtime: 1.0s
+dict_keys(['oof_pred', 'oof_proba', 'hist', 'test_proba', 'test_pred', 'test_f1', 'test_loss', 'cv_macro_f1_mean', 'cv_macro_f1_std', 'cv_logloss_mean', 'cv_logloss_std', 'runtime_sec', 'model_tag', 'qml_depth', 'qml_C'])
+
+[QKernelSVC_depth2_C10.0] DEV samples: 3,281 | TEST samples: 821
+[QKernelSVC_depth2_C10.0] CV folds: 5 | depth=2 | C=10.0
+
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 1: macroF1=0.7412 ::: log_loss=0.6298
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 2: macroF1=0.6853 ::: log_loss=0.7518
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 3: macroF1=0.7628 ::: log_loss=0.6308
+QML Walk-Forward CV:   0%|                                                                                                                                                                | 0/5 [00:00<?, ?it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 4: macroF1=0.7527 ::: log_loss=0.5923
+QML Walk-Forward CV:  80%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▌                              | 4/5 [00:00<00:00, 23.66it/s]C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+Fold 5: macroF1=0.7353 ::: log_loss=0.6710
+QML Walk-Forward CV: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:00<00:00, 17.85it/s]
+C:\Users\eoinm\projects\QML---Finance\Classes\ModelArchitectures\QuantumModels.py:197: RuntimeWarning: invalid value encountered in cast
+  return oof_pred.astype(int), oof_proba, hist, cache
+C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\sklearn\linear_model\_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+
+[QKernelSVC_depth2_C10.0] TEST macroF1: 0.7508
+[QKernelSVC_depth2_C10.0] TEST log loss: 0.6335
+[QKernelSVC_depth2_C10.0] Runtime: 0.4s
+dict_keys(['oof_pred', 'oof_proba', 'hist', 'test_proba', 'test_pred', 'test_f1', 'test_loss', 'cv_macro_f1_mean', 'cv_macro_f1_std', 'cv_logloss_mean', 'cv_logloss_std', 'runtime_sec', 'model_tag', 'qml_depth', 'qml_C'])
+
+Best QML run: QKernelSVC_depth2_C1.0 | CV logloss mean=0.6513
+Traceback (most recent call last):
+  File "C:\Users\eoinm\projects\QML---Finance\main.py", line 389, in <module>
+    main()
+  File "C:\Users\eoinm\projects\QML---Finance\main.py", line 369, in main
+    run_full_pipeline()
+  File "C:\Users\eoinm\projects\QML---Finance\main.py", line 47, in run_full_pipeline
+    backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet',
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\eoinm\projects\QML---Finance\main.py", line 293, in backtest_model_performance
+    oof_df = pd.read_parquet(parquet_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\pandas\io\parquet.py", line 669, in read_parquet
+    return impl.read(
+           ^^^^^^^^^^
+  File "C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\pandas\io\parquet.py", line 258, in read
+    path_or_handle, handles, filesystem = _get_path_or_handle(
+                                          ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\pandas\io\parquet.py", line 141, in _get_path_or_handle
+    handles = get_handle(
+              ^^^^^^^^^^^
+  File "C:\Users\eoinm\AppData\Roaming\Python\Python311\site-packages\pandas\io\common.py", line 882, in get_handle
+    handle = open(handle, ioargs.mode)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'data/results/trained_models/ensembles/BTC-USD/XGBoost_V1/XGBoost_V1.parquet'

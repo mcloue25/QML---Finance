@@ -3,10 +3,8 @@ import os
 import json 
 import uuid
 
-
-
 from datetime import datetime, timezone
-
+from sklearn.model_selection import TimeSeriesSplit
 
 
 
@@ -66,3 +64,22 @@ def generate_run_ID(symbol:str, model_type:str, horizon_days:int=10):
         # add your split dates if you have them
     }
     return meta 
+
+
+
+def make_walkforward_splits(X, n_splits=5, gap=0):
+    '''  Function for creating dataset splits so that the ensemble and qml models are traiend on identical splits
+    Args:
+        X (Tensor) : All data
+        n_splits (Int) : Number of folds in the dataset
+        gap (Int) : Space between to avoid leakage
+    '''
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    splits = []
+    for train_idx, val_idx in tscv.split(X):
+        if gap and gap > 0:
+            train_idx = train_idx[:-gap] if len(train_idx) > gap else train_idx[:0]
+        if len(train_idx) == 0:
+            raise ValueError("Train set empty after applying gap")
+        splits.append((train_idx, val_idx))
+    return splits

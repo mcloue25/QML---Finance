@@ -66,22 +66,30 @@ def loadXGBoost_Classifier():
 
 
 
-def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, early_stopping_rounds=None, fit_kwargs=None):
-    ''' Walk-forward CV predictions (OOF) with optional 'gap' (embargo) between train and val.
-        gap: number of samples to drop from the end of training fold to avoid overlap leakage.
-            For horizon h-day labels, a good default is gap=h.
-    '''
+def walkforward_cv_predict(
+    base_model,
+    X,
+    y,
+    splits,
+    labels=(0, 1, 2),
+    early_stopping_rounds=None,
+    fit_kwargs=None
+):
+    """
+    Walk-forward CV using PRECOMPUTED splits to guarantee identical folds across models.
+    Returns:
+        oof_pred: (T,)
+        oof_proba: (T, n_classes)
+        history: dict
+    """
     if fit_kwargs is None:
         fit_kwargs = {}
     fit_kwargs = dict(fit_kwargs)
     fit_kwargs.pop("callbacks", None)
 
-    if labels is None:
-        labels = sorted(np.unique(y))
-
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-
+    labels = list(labels)
     n_classes = len(labels)
+
     oof_proba = np.full((len(y), n_classes), np.nan)
     oof_pred = np.full(len(y), np.nan)
     history = defaultdict(list)
@@ -90,54 +98,50 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
     is_xgb = model_name.startswith("XGB")
     is_lgbm = model_name.startswith("LGBM")
 
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
-        if gap and gap > 0:
-            train_idx = train_idx[:-gap] if len(train_idx) > gap else train_idx[:0]
-
-        if len(train_idx) == 0:
-            raise ValueError(f"Fold {fold}: train set empty after applying gap={gap}")
-
+    for fold, (train_idx, val_idx) in enumerate(splits, 1):
         X_train, y_train = X[train_idx], y[train_idx]
         X_val, y_val = X[val_idx], y[val_idx]
 
         model = clone(base_model)
 
-        # NOTE - Early stopping handling
-        if early_stopping_rounds is not None:
+        # Early stopping handling
+        if early_stopping_rounds is not None and (is_xgb or is_lgbm):
             if is_xgb:
-                early_stop = xgb.callback.EarlyStopping(rounds=early_stopping_rounds, save_best=True)
+                import xgboost as xgb
+                early_stop = xgb.callback.EarlyStopping(
+                    rounds=early_stopping_rounds,
+                    save_best=True
+                )
                 model.set_params(callbacks=[early_stop])
                 model.fit(X_train, y_train, eval_set=[(X_val, y_val)], **fit_kwargs)
 
-            elif is_lgbm:
+            else:  # LGBM
+                import lightgbm as lgb
                 callbacks = [lgb.early_stopping(stopping_rounds=early_stopping_rounds)]
                 model.fit(X_train, y_train, eval_set=[(X_val, y_val)], callbacks=callbacks, **fit_kwargs)
-            else:
-                model.fit(X_train, y_train, **fit_kwargs)
-
         else:
-            # no early stopping
+            # no early stopping (or non-supported model)
             if is_xgb or is_lgbm:
                 model.fit(X_train, y_train, eval_set=[(X_val, y_val)], **fit_kwargs)
             else:
                 model.fit(X_train, y_train, **fit_kwargs)
 
-        # Predict & Score
         proba = model.predict_proba(X_val)
         pred = np.argmax(proba, axis=1)
+
         oof_proba[val_idx] = proba
         oof_pred[val_idx] = pred
-        
-        # Generate metrics & store best iteration
+
         f1 = f1_score(y_val, pred, average="macro")
         loss = log_loss(y_val, proba, labels=labels)
+
         best_iter = getattr(model, "best_iteration", None)
         if best_iter is None:
             best_iter = getattr(model, "best_iteration_", None)
 
         history["fold"].append(fold)
-        history["macro_f1"].append(f1)
-        history["log_loss"].append(loss)
+        history["macro_f1"].append(float(f1))
+        history["log_loss"].append(float(loss))
         history["best_iteration"].append(best_iter)
 
         print(f"Fold {fold}: macroF1={f1:.4f} ::: log_loss={loss:.4f}, best_iter={best_iter}")
@@ -149,64 +153,48 @@ def walkforward_cv_predict(base_model, X, y, n_splits=5, gap=0, labels=None, ear
 
 
 
-
-def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test, gap=20, n_splits=5):
-    ''' Main loop for training an ensemble model
-        Gap=20 to prevent data leakage
-    Args:
-        base_model (Model) : Base ensemble mdoel for trianing
-        X_dev (Tensor) : X training & val data 
-        y_dev (List) : Y training & val data
-        X_test (Tensor) : X test data
-        y_test (List) : Y test data
-    Returns:
-        results (Dict) : Dict contianing training results info
-    '''
+def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test, splits):
     t0 = time.time()
     print(f"DEV samples: {len(y_dev):,} | TEST samples: {len(y_test):,}")
-    print(f"CV splits: {n_splits} | gap: {gap}\n")
+    print(f"CV folds: {len(splits)} (precomputed)\n")
 
     print("Running walk-forward CV...")
     oof_pred, oof_proba, hist = walkforward_cv_predict(
-        base_model,
-        X_dev,
-        y_dev,
-        n_splits=n_splits,
-        gap=gap,
-        labels=[0,1,2],
+        base_model=base_model,
+        X=X_dev,
+        y=y_dev,
+        splits=splits,
+        labels=(0, 1, 2),
         early_stopping_rounds=100
     )
 
     cv_time = time.time() - t0
     print(f"\nCV complete in {cv_time:.1f}s")
 
-    # 
     mean_f1 = float(np.mean(hist["macro_f1"]))
     std_f1 = float(np.std(hist["macro_f1"]))
     mean_ll = float(np.mean(hist["log_loss"]))
     std_ll = float(np.std(hist["log_loss"]))
-    
+
     print(f"CV macroF1: {mean_f1:.4f} ± {std_f1:.4f}")
     print(f"CV logloss: {mean_ll:.4f} ± {std_ll:.4f}\n")
 
-    print("Fitting on dev & evaluating on test")
+    print("Fitting on full dev & evaluating on test...")
     final_model = clone(base_model)
     final_model.fit(X_dev, y_dev)
 
-    # Calculate results on test
     test_proba = final_model.predict_proba(X_test)
     test_pred = test_proba.argmax(axis=1)
     test_f1 = f1_score(y_test, test_pred, average="macro")
-    test_loss = log_loss(y_test, test_proba, labels=[0,1,2])
-
+    test_loss = log_loss(y_test, test_proba, labels=[0, 1, 2])
 
     print(f"TEST macroF1: {test_f1:.4f}")
     print(f"TEST log loss: {test_loss:.4f}\n")
 
     total_time = time.time() - t0
-    print(f"\nTotal runtime: {total_time:.1f}s")
+    print(f"Total runtime: {total_time:.1f}s")
 
-    results = {
+    return {
         "oof_pred": oof_pred,
         "oof_proba": oof_proba,
         "hist": hist,
@@ -220,7 +208,6 @@ def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test, gap=20, n_spli
         "cv_logloss_std": std_ll,
         "runtime_sec": float(total_time),
     }
-    return results
 
 
 
