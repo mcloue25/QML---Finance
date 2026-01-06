@@ -106,10 +106,10 @@ class StockModelEvaluator:
         preds_test = preds_test.copy()
 
         # Ensure datetime index on predictions
-        if not isinstance(preds_dev.index, pd.DatetimeIndex):
-            preds_dev.index = pd.to_datetime(preds_dev.index)
-        if not isinstance(preds_test.index, pd.DatetimeIndex):
-            preds_test.index = pd.to_datetime(preds_test.index)
+        # if not isinstance(preds_dev.index, pd.DatetimeIndex):
+        #     preds_dev.index = pd.to_datetime(preds_dev.index)
+        # if not isinstance(preds_test.index, pd.DatetimeIndex):
+        #     preds_test.index = pd.to_datetime(preds_test.index)
 
         # Ensure dates are datetime
         dates_dev = pd.to_datetime(dates_dev)
@@ -120,12 +120,12 @@ class StockModelEvaluator:
         preds_test = preds_test.reindex(pd.DatetimeIndex(dates_test))
 
         # Minimal validation
-        missing = set(proba_cols) - set(preds_dev.columns)
-        if missing:
-            raise ValueError(f"[{model_tag}] preds_dev missing columns: {sorted(missing)}")
-        missing = set(proba_cols) - set(preds_test.columns)
-        if missing:
-            raise ValueError(f"[{model_tag}] preds_test missing columns: {sorted(missing)}")
+        # missing = set(proba_cols) - set(preds_dev.columns)
+        # if missing:
+        #     raise ValueError(f"[{model_tag}] preds_dev missing columns: {sorted(missing)}")
+        # missing = set(proba_cols) - set(preds_test.columns)
+        # if missing:
+        #     raise ValueError(f"[{model_tag}] preds_test missing columns: {sorted(missing)}")
 
         self._models[model_tag] = {
             "preds_dev": preds_dev,
@@ -149,17 +149,47 @@ class StockModelEvaluator:
 
 
 
+    # def probability_quality_metrics(self, y_true: np.ndarray, proba: np.ndarray):
+    #     ''' Probability quality metrics suitable for your policy layer.
+    #     '''
+    #     metrics = {}
+    #     print(y_true)
+    #     print("---------")
+    #     print(proba)
+    #     a-b
+    #     metrics["log_loss"] = float(log_loss(y_true, proba, labels=list(range(self.n_classes))))
+    #     metrics["brier"] = brier_score_multiclass(y_true, proba, n_classes=self.n_classes)
+    #     metrics["ece_topclass"] = expected_calibration_error_topclass(y_true, proba, n_bins=10)
+    #     return metrics
+
+
+
     def probability_quality_metrics(self, y_true: np.ndarray, proba: np.ndarray):
         ''' Probability quality metrics suitable for your policy layer.
         '''
-        metrics = {}
-        print(y_true)
-        print(proba)
-        a-b
-        metrics["log_loss"] = float(log_loss(y_true, proba, labels=list(range(self.n_classes))))
-        metrics["brier"] = brier_score_multiclass(y_true, proba, n_classes=self.n_classes)
-        metrics["ece_topclass"] = expected_calibration_error_topclass(y_true, proba, n_bins=10)
-        return metrics
+        proba = np.asarray(proba, dtype=float)
+        y_true = np.asarray(y_true).astype(int)
+
+        valid = ~np.isnan(proba).any(axis=1)
+        if valid.sum() == 0:
+            raise ValueError("All rows are NaN. Your predictions are not aligned to labels/dates.")
+
+        y_true_v = y_true[valid]
+        proba_v = proba[valid]
+
+        # clip + renormalise (safe)
+        proba_v = np.clip(proba_v, 1e-12, 1.0)
+        proba_v = proba_v / proba_v.sum(axis=1, keepdims=True)
+
+        return {
+            "n_total": int(len(y_true)),
+            "n_used": int(valid.sum()),
+            "n_dropped": int((~valid).sum()),
+            "log_loss": float(log_loss(y_true_v, proba_v, labels=list(range(self.n_classes)))),
+            "brier": brier_score_multiclass(y_true_v, proba_v, n_classes=self.n_classes),
+            "ece_topclass": expected_calibration_error_topclass(y_true_v, proba_v, n_bins=10),
+        }
+
 
 
 

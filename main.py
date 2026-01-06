@@ -327,6 +327,14 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
     meta = generate_run_ID(stock_name, model_type, horizon_days)
     run_id = str(uuid.uuid4())
     run_row = {**meta, **metrics, **trade_stats}
+
+    # NOTE - NEED TO ADD WARM UP ROWS FOR AUDITING & TRACKING DEFENSIVENESS
+    # run_row.update({
+    #     "oof_warmup_rows": oof_meta["n_dropped_nan"],
+    #     "oof_warmup_end_date": oof_meta["warmup_end_date"],
+    # })
+    
+
     trades_made_df = bt.trade_list(bt_df, pos_col="position_lag", price_col="price")
     trades_made_df = trades_made_df.assign(run_id=run_id, symbol=stock_name)
     bt_df = bt_df.assign(run_id=run_id, symbol=stock_name)
@@ -381,10 +389,11 @@ def run_backtests(ticker_list:list):
 
 
 def run_backtests_with_comparison(ticker_list:list, feat_dict_path:str):
-    # ticker_list = [
-    #     "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-    #     "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    # ]
+    ''' Function to replace current run_bakctests() where it will run backtests for all different model architectures & then compare their results and assess their validity
+    Args:
+        ticker_list (List) : List of ticker symbols
+        feat_dict_path (String) : String to JSON obejct where K==ticker symbol && V== list of core features generated for that symbol
+    '''
     feature_dict = load_JSON_object(feat_dict_path)
     for stock_name in ticker_list:
         stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
@@ -396,6 +405,7 @@ def run_backtests_with_comparison(ticker_list:list, feat_dict_path:str):
             feature_cols=feature_dict[stock_name],
             target_col="signal_voladj_10d"
         )
+        # Split data time serries correct way
         X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
 
         model_pred_paths = {
@@ -515,15 +525,26 @@ def main():
     architecture_list = ['ensemble']  # quantum
     
     # NOTE - For running the entire pipelien in plan above 
-    # run_full_pipeline(
-    #     ticker_list, 
-    #     download_path='data/csv/historical/training/raw/',
-    #     architectrure_list=architecture_list
-    # )
+    run_full_pipeline(
+        ticker_list, 
+        download_path='data/csv/historical/training/raw/',
+        architectrure_list=architecture_list
+    )
 
     # NOTE - creates backtests for all ensemble models
     # run_backtests(ticker_list)
 
+    # parquet_files sanity test 
+    # df = pd.read_parquet('data/results/trained_models/ensembles/BTC-USD/XGBoost_V1/XGBoost_V1.parquet')
+    # nan_mask = df[["p_class_0","p_class_1","p_class_2"]].isna().any(axis=1)
+    # print("NaN rows:", nan_mask.sum())
+    # print("First NaN date:", df.index[nan_mask][0] if nan_mask.any() else None)
+    # print("Last NaN date:", df.index[nan_mask][-1] if nan_mask.any() else None)
+    # print("----"*20)
+    # nan_mask = df[["p_class_0","p_class_1","p_class_2"]].isna().any(axis=1)
+    # nan_positions = np.where(nan_mask.values)[0]
+    # print("NaNs contiguous?", np.all(np.diff(nan_positions) == 1))
+    # a-b
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
     run_backtests_with_comparison(ticker_list, feat_dict_path='data/json/stock_key_features.json')
 

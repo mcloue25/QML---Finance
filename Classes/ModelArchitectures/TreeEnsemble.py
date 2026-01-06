@@ -75,13 +75,13 @@ def walkforward_cv_predict(
     early_stopping_rounds=None,
     fit_kwargs=None
 ):
-    """
+    '''
     Walk-forward CV using PRECOMPUTED splits to guarantee identical folds across models.
     Returns:
         oof_pred: (T,)
         oof_proba: (T, n_classes)
         history: dict
-    """
+    '''
     if fit_kwargs is None:
         fit_kwargs = {}
     fit_kwargs = dict(fit_kwargs)
@@ -211,6 +211,51 @@ def ensemble_train_loop(base_model, X_dev, y_dev, X_test, y_test, splits):
 
 
 
+PROBA_COLS = ["p_class_0", "p_class_1", "p_class_2"]
+def clean_pred_df_for_eval(df:pd.DataFrame, *, proba_cols=PROBA_COLS, name: str = "", dropna: bool = True, renormalise: bool = True):
+    ''' Clean prediction DF for evaluation/backtesting.
+        - Drops rows with NaN probs (OOF warm-up) and returns metadata.
+        - Optionally renormalises probabilities to sum to 1.0.
+    '''
+    out = df.copy()
+
+    # Identify invalid rows -  rows with a NaN in a proba column
+    invalid = out[proba_cols].isna().any(axis=1)
+    n_total = int(len(out))
+    n_invalid = int(invalid.sum())
+
+    warmup_end_date = None
+    valid_mask = ~invalid
+    if valid_mask.any():
+        # first valid pred date
+        warmup_end_date = out.index[valid_mask][0]
+
+    meta = {
+        "name": name,
+        "n_total": n_total,
+        "n_dropped_nan": n_invalid if dropna else 0,
+        "n_remaining": int(n_total - n_invalid) if dropna else n_total,
+        "warmup_end_date": str(warmup_end_date) if warmup_end_date is not None else None,
+    }
+
+    # Clean up nan rows 
+    if dropna and n_invalid > 0:
+        out = out.loc[~invalid].copy()
+
+    # Optional: renormalise probabilities (defensive)
+    if renormalise and len(out) > 0:
+        P = out[proba_cols].to_numpy(dtype=float)
+        P = np.clip(P, 1e-12, 1.0)
+        row_sums = P.sum(axis=1, keepdims=True)
+        # avoid divide by zero (shouldn't happen after clip)
+        P = P / row_sums
+        out.loc[:, proba_cols] = P
+
+    return out, meta
+
+
+
+
 def build_oof_df(dates, y_true, oof_pred, oof_proba, horizon, model_name):
     ''' 
     '''
@@ -269,8 +314,12 @@ def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev:
         model_name=arch_name
     )
 
+    oof_df, oof_meta = clean_pred_df_for_eval(oof_df, name=f"{arch_name}_OOF", dropna=True)
+    print(f"[{arch_name}] OOF clean meta:", oof_meta)
+
     oof_path = f"{output_path}{arch_name}.parquet"
     oof_df.to_parquet(oof_path)
+
 
     # NOTE - Save test predictions
     if dates_test is not None:
@@ -282,6 +331,11 @@ def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev:
             horizon=20,
             model_name=arch_name
         )
+
+        # For test, NaNs are not expected still drop if present, but warn.
+        test_df, test_meta = clean_pred_df_for_eval(test_df, name=f"{arch_name}_TEST", dropna=True)
+        if test_meta["n_dropped_nan"] > 0:
+            print(f"WARNING: [{arch_name}] Test predictions had NaNs. Meta: {test_meta}")
 
         test_path = f"{output_path}{arch_name}_test.parquet"
         test_df.to_parquet(test_path)
