@@ -17,17 +17,21 @@ def pretty_print_json(obj: dict):
 
 @dataclass
 class BacktestConfig:
+    ''' Config for params to run backtest under to simulate market conditions
+    '''
     horizon_days: int = 10
     # per unit turnover (e.g., 5 bps)
     transaction_cost: float = 0.0005
     mode: Literal["long_only", "long_short"] = "long_only"
     hold_rule: Literal["signal_until_change", "fixed_horizon"] = "signal_until_change"
+    execution_lag: int = 1
+    entry_threshold: float = 0.20
     # signal_until_change: position follows latest signal (shifted by 1 day)
     # fixed_horizon: enter position and hold for horizon_days (ignores intermediate signals)
 
 
 class BackTest:
-    """ Backtesting utility for regime/action predictions (sell/hold/buy) with realistic execution.
+    ''' Backtesting utility for regime/action predictions (sell/hold/buy) with realistic execution.
     Expected inputs:
       - preds_df: DataFrame indexed by date with at least:
           * y_pred in {0,1,2} (sell/hold/buy)
@@ -39,9 +43,9 @@ class BackTest:
     Outputs:
       - bt_df: DataFrame with returns, positions, turnover, costs, equity curve
       - metrics: dict of risk/return statistics (separate helper)
-    """
+    '''
 
-    def __init__(self, path: Optional[str] = None, config: Optional[BacktestConfig] = None):
+    def __init__(self, path: Optional[str] =None, config: Optional[BacktestConfig] =None):
         self.path = path
         self.config = config or BacktestConfig()
         if self.path:
@@ -52,10 +56,13 @@ class BackTest:
         os.makedirs(folder_name, exist_ok=True)
     
 
-    # Data prep
+
+    # NOTE - StaticMethods
     @staticmethod
     def ensure_datetime_index(df_or_s: pd.DataFrame | pd.Series):
-        ''' Ensure time-series index is a DatetimeIndex and sorted chronologically for time-series correctness.
+        ''' Ensures time series index is a DatetimeIndex and sorted chronologically for time-series correctness
+        Args:
+            df_or_s (DataFrame) : DF contianing feature data & date idnex col
         '''
         if not isinstance(df_or_s.index, pd.DatetimeIndex):
             df_or_s = df_or_s.copy()
@@ -63,205 +70,18 @@ class BackTest:
         return df_or_s.sort_index()
 
 
+
     @staticmethod
     def compute_log_returns(prices: pd.Series):
         ''' Compute daily log returns
         '''
         return np.log(prices).diff()
-
-
-    def baseline_buy_and_hold(self, prices: pd.Series, start: Optional[pd.Timestamp] = None, end: Optional[pd.Timestamp] = None):
-        ''' Buy-and-hold baseline equity curve (always fully invested).
-        Args:
-            prices: Price series indexed by date.
-            start/end: Optional evaluation window bounds.
-
-        Returns:
-            DataFrame indexed by date with:
-              - ret: asset daily log return
-              - position_lag: fixed exposure (1.0)
-              - strategy_ret: position * ret
-              - cost: transaction costs (0 for buy/hold)
-              - net_ret: strategy_ret - cost
-              - cum_ret: cumulative log return
-        '''
-        # Chronological ordering and DatetimeIndex
-        prices = self.ensure_datetime_index(prices)
-
-        # Optionally restrict to a sub-period
-        if start or end:
-            prices = prices.loc[start:end]
-        # Compute daily log returns
-        ret = self.compute_log_returns(prices).dropna()
-        # Initialise output DataFrame aligned with return dates
-        out = pd.DataFrame(index=ret.index)
-        # Buy-and-hold: always fully invested
-        out["ret"] = ret
-        out["position_lag"] = 1.0
-        # Strategy return equals asset return (no timing or leverage)
-        out["strategy_ret"] = out["position_lag"] * out["ret"]
-        # No transaction costs for buy-and-hold
-        out["cost"] = 0.0
-        # Net returns equal gross returns
-        out["net_ret"] = out["strategy_ret"]
-        # Cumulative log return (additive over time)
-        out["cum_ret"] = out["net_ret"].cumsum()
-
-        return out
-
-
-
-    # def map_actions_to_position(self, y_pred: pd.Series) -> pd.Series:
-    #     ''' BINARY EXPOSURE
-    #         Signal > position  
-    #         Map action classes to target position.
-    #         Default: long-only (sell/hold => flat, buy => long).
-    #         Optional: long-short (sell => -1, hold => 0, buy => +1).
-    #     '''
-    #     if self.config.mode == "long_only":
-    #         mapping = {0: 0.0, 1: 0.0, 2: 1.0}
-    #     else:
-    #         mapping = {0: -1.0, 1: 0.0, 2: 1.0}
-    #     return y_pred.map(mapping).astype(float)
-
-
-
-    def probability_weighted_position(self,df: pd.DataFrame, threshold: float = 0.20, vol_window: int = 20, use_vol_scaling: bool = True):
-        ''' Long-only probability-weighted position sizing.
-        Core idea:
-            signal = p_buy - p_sell
-            pos = clip(signal, 0, 1)
-            + thresholding (ignore weak/conflicted signals)
-            + optional volatility scaling (reduce exposure in high-vol regimes)
-        Args:
-            df: DataFrame containing p_class_2 (buy prob) and p_class_0 (sell prob) and optionally 'ret' if vol scaling is enabled.
-            threshold: minimum (p_buy - p_sell) required to take exposure
-            vol_window: rolling window for realized volatility estimate
-            use_vol_scaling: if True, scale exposure down when vol is elevated
-        Returns:
-            pd.Series of target positions in [0,1]
-        '''
-        required = {"p_class_2", "p_class_0"}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(f"Missing required columns for prob sizing: {sorted(missing)}")
-        # Net confidence: buy vs sell
-        signal = df["p_class_2"] - df["p_class_0"]
-        # Base position (long-only) in [0, 1]
-        pos = signal.clip(lower=0.0, upper=1.0)
-        # Filter weak trades
-        pos = pos.where(signal >= threshold, 0.0)
-
-        if use_vol_scaling:
-            # Need returns to compute vol scaling
-            if "ret" not in df.columns:
-                raise ValueError("Column 'ret' required for vol scaling (compute returns before calling).")
-
-            vol = df["ret"].rolling(vol_window).std()
-            target_vol = vol.median()
-
-            # Scale down when vol > target_vol; never lever up above 1.0
-            vol_scale = (target_vol / vol).clip(upper=1.0)
-            pos = pos * vol_scale
-
-            # Handle early NaNs from rolling vol window
-            pos = pos.fillna(0.0)
-
-        return pos
-
-
-
-    def apply_hold_rule(self, target_pos: pd.Series):
-        ''' Convert target positions into executed target positions based on hold rule.
-            - signal_until_change:
-                Follow the latest target position daily (before lagging).
-            - fixed_horizon:
-                When a non-zero target position appears, hold it for horizon_days
-                regardless of intermediate target changes.
-        '''
-        if self.config.hold_rule == "signal_until_change":
-            return target_pos
-
-        # Fixed-horizon: simple state machine
-        h = self.config.horizon_days
-        pos = target_pos.copy()
-        executed = pd.Series(0.0, index=pos.index)
-
-        holding = 0
-        current = 0.0
-        for i, (dt, p) in enumerate(pos.items()):
-            # If currently holding a position, keep it until timer expires
-            if holding > 0:
-                executed.iloc[i] = current
-                holding -= 1
-                continue
-
-            # If a new non-zero signal appears, enter and hold for h days
-            if p != 0.0:
-                current = p
-                holding = h
-                executed.iloc[i] = current
-                holding -= 1
-            else:
-                # Otherwise remain flat
-                current = 0.0
-                executed.iloc[i] = 0.0
-
-        return executed
-
-
-
-
-    # NOTE - Main backtest
-    def run(self, preds_df: pd.DataFrame, prices: pd.Series) -> pd.DataFrame:
-        ''' Run backtest using model predictions against a price series.
-            Key time-series correctness constraint:
-            - Position is shifted by 1 day (decision at t executed at t+1)
-            - Prevents look-ahead bias and mimics realistic order placement.
-        Args:
-            preds_df: indexed by date, contains y_pred and/or class probabilities
-            prices: indexed by date, price series
-        Returns:
-            bt_df: DataFrame containing returns, positions, turnover, costs, cum returns
-        '''
-        preds_df = self.ensure_datetime_index(preds_df)
-        prices = self.ensure_datetime_index(prices)
-
-        # Align both inputs to the same trading calendar
-        df = preds_df.copy()
-        df = df.join(prices.rename("price"), how="inner")
-
-        # Compute daily log returns
-        df["ret"] = self.compute_log_returns(df["price"])
-        df = df.dropna(subset=["ret", "y_pred"])
-
-        # Build target position from probabilities (policy layer)
-        df["target_position"] = self.probability_weighted_position(df)
-        df["target_position"] = self.apply_hold_rule(df["target_position"])
-
-        # Execution lag: today's signal becomes tomorrow's position
-        df["position_lag"] = df["target_position"].shift(1).fillna(0.0)
-
-        # Strategy gross returns = exposure * asset return
-        df["strategy_ret"] = df["position_lag"] * df["ret"]
-
-        # Turnover = absolute change in exposure (proxy for trading activity)
-        df["turnover"] = df["position_lag"].diff().abs().fillna(0.0)
-
-        # Transaction costs proportional to turnover
-        df["cost"] = df["turnover"] * self.config.transaction_cost
-
-        # Net returns after costs + cumulative log equity curve
-        df["net_ret"] = df["strategy_ret"] - df["cost"]
-        df["cum_ret"] = df["net_ret"].cumsum()
-
-        return df
-
+    
 
     # NOTE - Calculating Performance Metrics
     @staticmethod
-    def performance_metrics(bt_df: pd.DataFrame, ann_factor: int = 252):
-        ''' Compute standard performance statistics.
+    def performance_metrics(bt_df:pd.DataFrame, ann_factor:int =252):
+        ''' Compute standard performance statistics
         Notes:
           - Using log returns: annual_return approximated by mean(log_ret)*252
           - cum_ret is cumulative log return (equity = exp(cum_ret))
@@ -293,7 +113,7 @@ class BackTest:
     
 
     @staticmethod
-    def trade_stats(bt_df: pd.DataFrame, entry_threshold: float = 0.10):
+    def trade_stats(bt_df:pd.DataFrame, entry_threshold:float =0.10):
         ''' Trade stats for continuous positions by defining a "trade" as being meaningfully invested.
         Entry: position_lag crosses from < threshold to >= threshold
         Exit : position_lag crosses from >= threshold to < threshold
@@ -305,7 +125,6 @@ class BackTest:
 
         entries = in_trade & (~prev)
         exits = (~in_trade) & prev
-
         entry_dates = bt_df.index[entries]
         exit_dates = bt_df.index[exits]
 
@@ -329,35 +148,187 @@ class BackTest:
             "n_exits": n_exits,
             "avg_trade_duration_days": avg_duration,
         }
+
+
+    def baseline_buy_and_hold(self, prices: pd.Series, start: Optional[pd.Timestamp]=None, end: Optional[pd.Timestamp]=None):
+        ''' Buy and hold baseline equity curve (always fully invested)
+            Shows how trading accounts value changes over time
+            Account balance on Y-axis
+        Args:
+            prices: Price series indexed by date.
+            start/end: Optional evaluation window bounds.
+        Returns:
+            out (DataFrame) : DataFrame indexed by date with:
+                - ret: asset daily log return
+                - position_lag: fixed exposure (1.0)
+                - strategy_ret: position * ret
+                - cost: transaction costs (0 for buy/hold)
+                - net_ret: strategy_ret - cost
+                - cum_ret: cumulative log return
+        '''
+        # Chronological ordering and DatetimeIndex
+        prices = self.ensure_datetime_index(prices)
+
+        # Optionally restrict to a sub-period
+        if start or end:
+            prices = prices.loc[start:end]
+        # Compute daily log returns
+        ret = self.compute_log_returns(prices).dropna()
+        # Initialise output DataFrame aligned with return dates
+        out = pd.DataFrame(index=ret.index)
+        # Buy-and-hold: always fully invested
+        out["ret"] = ret
+        out["position_lag"] = 1.0
+        # Strategy return equals asset return (no timing or leverage)
+        out["strategy_ret"] = out["position_lag"] * out["ret"]
+        # No transaction costs for buy-and-hold
+        out["cost"] = 0.0
+        # Net returns equal gross returns
+        out["net_ret"] = out["strategy_ret"]
+        # Cumulative log return (additive over time)
+        out["cum_ret"] = out["net_ret"].cumsum()
+
+        return out
+
+
+
+    def probability_weighted_position(self,df: pd.DataFrame, threshold:float =0.20, vol_window:int =20, use_vol_scaling:bool =True):
+        ''' Long only probability weighted position sizing
+        Main idea:
+            signal = p_buy - p_sell
+            pos = clip(signal, 0, 1)
+            + thresholding (ignore weak/conflicted signals)
+            + optional volatility scaling (reduce exposure in high vol regimes)
+        Args:
+            df (DataFrame) : DataFrame containing p_class_2 (buy prob) and p_class_0 (sell prob) and optionally 'ret' if vol scalings enabled
+            threshold (Float) : MIN (p_buy - p_sell) required to take exposure
+            vol_window (Int) : rolling window for realized volatility estimate
+            use_vol_scaling (Bool) : if True, scale exposure down when vol is elevated
+        Returns:
+            pd.Series of target positions in [0,1]
+        '''
+        # Net confidence: buy vs sell
+        signal = df["p_class_2"] - df["p_class_0"]
+        # Base position (long-only) in [0, 1] and filter weak trades
+        pos = signal.clip(lower=0.0, upper=1.0)
+        pos = pos.where(signal >= threshold, 0.0)
+
+        # Need returns to compute vol scaling
+        if use_vol_scaling:
+            vol = df["ret"].rolling(vol_window).std()
+            target_vol = vol.median()
+            # Scale down when vol > target_vol; never lever up above 1.0
+            vol_scale = (target_vol / vol).clip(upper=1.0)
+            pos = pos * vol_scale
+            # Handle early NaNs from rolling vol window
+            pos = pos.fillna(0.0)
+
+        return pos
+
+
+
+    def apply_hold_rule(self, target_pos: pd.Series):
+        ''' Main function for converting target positions into executed target positions based on hold rule
+            - signal_until_change:
+                Follow the latest target position daily (before lagging).
+            - fixed_horizon:
+                When a non-zero target position appears, hold it for horizon_days
+                regardless of intermediate target changes.
+        Args:
+            target_pos (pd.col) : column of probability wewighted target positions
+        '''
+        if self.config.hold_rule == "signal_until_change":
+            return target_pos
+
+        # Fixed-horizon: simple state machine
+        h = self.config.horizon_days
+        pos = target_pos.copy()
+        executed = pd.Series(0.0, index=pos.index)
+
+        holding = 0
+        current = 0.0
+        for i, (dt, p) in enumerate(pos.items()):
+            # If currently holding a position, keep it until timer expires
+            if holding > 0:
+                executed.iloc[i] = current
+                holding -= 1
+                continue
+
+            # If a new non-zero signal appears - enter and hold for h days
+            if p != 0.0:
+                current = p
+                holding = h
+                executed.iloc[i] = current
+                holding -= 1
+            else:
+                # Otherwise remain flat
+                current = 0.0
+                executed.iloc[i] = 0.0
+
+        return executed
+
+
+
+    # NOTE - Main backtest
+    def run(self, preds_df: pd.DataFrame, prices: pd.Series):
+        ''' Run backtest using model predictions against a price series.
+            Key time-series correctness constraint:
+            - Position is shifted by 1 day (decision at t executed at t+1)
+            - Prevents look-ahead bias and mimics realistic order placement.
+        Args:
+            preds_df (DataFrame): indexed by date, contains y_pred and/or class probabilities
+            prices (Series): indexed by date, price series
+        Returns:
+            bt_df: DataFrame containing returns, positions, turnover, costs, cum returns
+        '''
+        # Convert date col to datetime index
+        preds_df = self.ensure_datetime_index(preds_df)
+        prices = self.ensure_datetime_index(prices)
+
+        # Align both inputs to the same trading calendar
+        df = preds_df.copy()
+        df = df.join(prices.rename("price"), how="inner")
+
+        # Compute daily log returns
+        df["ret"] = self.compute_log_returns(df["price"])
+        df = df.dropna(subset=["ret", "y_pred"])
+
+        # Build target position from probabilities (policy layer)
+        df["target_position"] = self.probability_weighted_position(df, threshold=self.config.entry_threshold)
+        df["target_position"] = self.apply_hold_rule(df["target_position"])
+        df["position_lag"] = df["target_position"].shift(self.config.execution_lag).fillna(0.0)
+
+        # Execution lag: today's signal becomes tomorrow's position
+        df["position_lag"] = df["target_position"].shift(1).fillna(0.0)
+
+        # Strategy gross returns = exposure * asset return
+        df["strategy_ret"] = df["position_lag"] * df["ret"]
+
+        # Turnover = absolute change in exposure (proxy for trading activity)
+        df["turnover"] = df["position_lag"].diff().abs().fillna(0.0)
+
+        # Transaction costs proportional to turnover
+        df["cost"] = df["turnover"] * self.config.transaction_cost
+
+        # Net returns after costs + cumulative log equity curve
+        df["net_ret"] = df["strategy_ret"] - df["cost"]
+        df["cum_ret"] = df["net_ret"].cumsum()
+        return df
+
     
 
     def trade_list(self,bt_df, price_col=None, pos_col=None, entry_threshold: float = 0.10, exit_threshold: float = 0.10):
-        ''' Build a trade list from continuous exposure by thresholding exposure.
+        ''' Build a trade list from continuous exposure by thresholding exposure
         Args:
-            bt_df: backtest DataFrame output from run()
-            price_col: optional override for price column name
-            pos_col: optional override for position column name
-            entry_threshold: exposure threshold to define entering a trade
-            exit_threshold: currently unused (exit defined by dropping below threshold)
+            bt_df (DataFrame) : backtest DataFrame output from run()
+            price_col (Series) : optional override for price column name
+            pos_col (Series) : optional override for position column name
+            entry_threshold (Float) : exposure threshold to define entering a trade
+            exit_threshold (Float) : currently unused (exit defined by dropping below threshold)
+        Returns:
+            trades_df (DataFrame) : DF contianing all executed trade info
         '''
         df = bt_df.copy()
-
-        # Auto-detect columns if not specified
-        if pos_col is None:
-            for c in ["position", "position_lag", "pos", "positions", "exposure", "target_position"]:
-                if c in df.columns:
-                    pos_col = c
-                    break
-        if price_col is None:
-            for c in ["close", "price", "adj_close"]:
-                if c in df.columns:
-                    price_col = c
-                    break
-
-        if pos_col is None or pos_col not in df.columns:
-            raise ValueError("bt_df missing required position column (tried common names).")
-        if price_col is None or price_col not in df.columns:
-            raise ValueError(f"bt_df missing required price column '{price_col}' (or pass price_col=...)")
 
         # Use abs exposure so this works even if you later support shorts
         pos = df[pos_col].fillna(0.0).astype(float).abs()
@@ -402,6 +373,7 @@ class BackTest:
                 "entry_price": entry_px,
                 "exit_price": exit_px,
                 "return": ret,
+                # Profit / Loss from each executed trade
                 "pnl_pct": ret * 100.0,
                 "bars_held": int(df.loc[e:x].shape[0] - 1),
                 "avg_exposure": float(pos.loc[e:x].mean()),
@@ -446,22 +418,6 @@ class BackTest:
         if save_path:
             plt.savefig(save_path)
         plt.close()
-
-
-    # def save(self, bt_df: pd.DataFrame, metrics: Dict[str, float], name: str) -> None:
-    #     ''' Save backtest outputs to parquet
-    #     '''
-    #     if not self.path:
-    #         raise ValueError("BackTest was initialized without a path; cannot save.")
-
-    #     bt_path = os.path.join(self.path, f"{name}_bt.parquet")
-    #     metrics_path = os.path.join(self.path, f"{name}_metrics.json")
-
-    #     bt_df.to_parquet(bt_path)
-    #     with open(metrics_path, "w", encoding="utf-8") as f:
-    #         json.dump(metrics, f, indent=4)
-
-    #     print(f"Saved:\n  {bt_path}\n  {metrics_path}")
 
 
 
@@ -516,6 +472,8 @@ class BackTest:
         out_dir = base_dir / str(run_id) / "curves"
         out_dir.mkdir(parents=True, exist_ok=True)
 
+
+        # NOTE - SAving curves and trdeas to .parquet files
         # Save curve DF
         curve_df.to_parquet(
             out_dir / f"{run_id}.parquet",
@@ -526,18 +484,17 @@ class BackTest:
         )
 
         # Save Trades
-        if trades_df is not None and len(trades_df) > 0:
-            trades_df = trades_df.copy()
-            if "date" in trades_df.columns:
-                trades_df["date"] = trades_df["date"].astype(str)
+        trades_df = trades_df.copy()
+        if "date" in trades_df.columns:
+            trades_df["date"] = trades_df["date"].astype(str)
 
-            out_dir = base_dir / str(run_id) / "trades"
-            out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = base_dir / str(run_id) / "trades"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-            trades_df.to_parquet(
-                out_dir / f"{run_id}.parquet",
-                index=False,
-                engine="pyarrow",
-                compression="snappy",
-                version="1.0",
-            )
+        trades_df.to_parquet(
+            out_dir / f"{run_id}.parquet",
+            index=False,
+            engine="pyarrow",
+            compression="snappy",
+            version="1.0",
+        )

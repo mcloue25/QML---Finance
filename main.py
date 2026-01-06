@@ -2,7 +2,9 @@ import os
 
 import pandas as pd
 
+from dataclasses import dataclass
 from sklearn.model_selection import TimeSeriesSplit
+from typing import Dict, List, Optional, Tuple, Any, Iterable
 
 from utilities import *
 from Classes.BackTesting import BacktestConfig, BackTest
@@ -14,6 +16,7 @@ from Classes.FeatureExtraction.FeatureEngineering import FeatureBuilder
 # Load model architectures for testing
 from Classes.ModelArchitectures.TreeEnsemble import *
 from Classes.ModelArchitectures.QuantumModels import *
+from Classes.ModelComparison import StressGrid, StockModelEvaluator
 
 
 
@@ -144,24 +147,14 @@ def time_train_test_split(X, y, dates, test_size=0.2):
 
 
 
-def run_full_pipeline():
+def run_full_pipeline(ticker_list:list, download_path:str, architectrure_list:list):
     ''' Function to run the entire pipeline for all stocks from ends to end 
         Does:
             * Downloads all stock tickers
             * Generates Features
             * Assesses Relevance of generated features & keeps only core featureset
             * Trains Ensemble & Quantum models & saves results to parquet file
-            * Backtests model pereofrmance against time-series-correct data
-
     '''
-    ticker_list = [
-        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    ]
-    # ticker_list = ["BTC-USD"]
-
-    download_path = 'data/csv/historical/training/raw/'
-
     # Download all ticker data
     # download_data(ticker_list, period="max", output_path=download_path)
 
@@ -174,51 +167,16 @@ def run_full_pipeline():
         key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
         features_dict[stock_name] = key_features
         
-        # NOTE - Main functionf or training classical & quantum models
-        model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features)
-
-
-    ''' Get model before archtype
-        Might have to move this around so its:
-            * stock_name/arch_type (ensemble vs qml) / arch_type / .parquet file
-        
-    '''
-    for arch_type in os.listdir('data/results/trained_models/'):
-        for model_type in os.listdir(f'data/results/trained_models/{arch_type}/'):
-            
-
-            Perform backtest              f'data/results/trained_models/{arch_type}/{model_type}/'
-            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
-                                    # This is causing the ISSUE Need to iterate over possible model Architectures
-                                    model_type='xgb',
-                                    stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-                                    stock_name=stock_name,
-                                    backtest_output_path="data/results/backtests/"
-
-
-            # # Perform backtest
-            # backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
-            #                         # This is causing the ISSUE Need to iterate over possible model Architectures
-            #                         model_type='xgb',
-            #                         stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-            #                         stock_name=stock_name,
-            #                         backtest_output_path="data/results/backtests/"
-
-
-        # backtest_model_performance(parquet_path=f'data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C10.0/QKernelSVC_depth2_C10.0.parquet', 
-        #                         # This is causing the ISSUE Need to iterate over possible model Architectures
-        #                            model_type='QKernelSVC_depth2_C10.0',
-        #                            stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-        #                            stock_name=stock_name,
-        #                            backtest_output_path="data/results/backtests/")
+        # NOTE - Main function for training classical & quantum models
+        model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features, architectures=architectrure_list)
     
-    # save_JSON_object(features_dict, 'data/json/stock_key_features.json')
+    save_JSON_object(features_dict, 'data/json/stock_key_features.json')
     
 
 
 
 
-def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10):
+def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10, architectures=['ensemble', 'quantum']):
     ''' Main function for training different models on the same data
     Args:
         csv_path (String) : PAth to historical data CSV 
@@ -239,20 +197,22 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10)
     splits = make_walkforward_splits(X_dev, n_splits=5, gap=horizon)
 
     # NOTE - Train ensembles
-    ensemble_model_training(
-        stock_name=stock_name, 
-        X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev, 
-        X_test=X_test, y_test=y_test, dates_test=dates_test, 
-        splits=splits
-    )
+    if 'ensemble' in architectures:
+        ensemble_model_training(
+            stock_name=stock_name, 
+            X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev, 
+            X_test=X_test, y_test=y_test, dates_test=dates_test, 
+            splits=splits
+        )
 
     # NOTE - Train quantum model using same splits
-    # quantum_model_training(
-    #     stock_name=stock_name,
-    #     X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev,
-    #     X_test=X_test, y_test=y_test, dates_test=dates_test,
-    #     splits=splits
-    # )
+    if 'quantum' in architectures: 
+        quantum_model_training(
+            stock_name=stock_name,
+            X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev,
+            X_test=X_test, y_test=y_test, dates_test=dates_test,
+            splits=splits
+        )
 
 
 
@@ -265,24 +225,47 @@ def ensemble_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test,
     # LGBM
     lgbm = load_LGBM_Classifier()
     lgbm_results = ensemble_train_loop(lgbm, X_dev, y_dev, X_test, y_test, splits)
+    # Analyse LGBM results
     analyse_ensemble_results(
-        lgbm_results, y_test, dates_dev, y_dev,
+        lgbm_results, 
+        y_test, 
+        dates_dev, 
+        y_dev,
         "LGBM_V1",
-        output_path=f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/"
+        output_path=f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/",
+        dates_test=dates_test,
     )
 
     # XGBoost
     xgb = loadXGBoost_Classifier()
     xgb_results = ensemble_train_loop(xgb, X_dev, y_dev, X_test, y_test, splits)
+    # Analyse XGBoost results
     analyse_ensemble_results(
-        xgb_results, y_test, dates_dev, y_dev,
+        xgb_results, 
+        y_test, 
+        dates_dev, 
+        y_dev,
         "XGBoost_V1",
-        output_path=f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/"
+        output_path=f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/",
+        dates_test=dates_test,
     )
 
 
 
 def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), model_tag="QKernelSVC_V1"):
+    ''' Function for training different kinds of quantum models
+    Args:
+        stock_name (String) : 
+        X_dev (np.ndarray) :
+        y_dev (np.ndarray) :
+        dates_dev (np.ndarray) :
+        X_test (np.ndarray) :
+        y_test (np.ndarray) :
+        splits () : 
+        depth () : Controls how expressive the quantum feature map is 
+        Cs (Tuple) : Controls how aggressivly the SVM uses the kernel (bias / variance tradeoff)
+        model_tag (String) : Name of run ID
+    '''
     create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
 
     cache = KernelCache()
@@ -317,9 +300,6 @@ def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, 
 
 
 
-
-
-
 def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str, stock_name:str, backtest_output_path:str, horizon_days:int=10):
     ''' Run OOF backtest on trained model to evaluate performance 
     Args:
@@ -328,7 +308,6 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
     '''
     oof_df = pd.read_parquet(parquet_path)
     prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
-    print(oof_df)
     cfg = BacktestConfig(
         horizon_days=10,
         transaction_cost=0.0005,
@@ -340,7 +319,7 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
     create_folder(f'{backtest_output_path}{stock_name}/{model_type}/')
     bt = BackTest(path=f'{backtest_output_path}{stock_name}/{model_type}/', config=cfg)
 
-    # Run backtest & generate metrics and trades
+    # NOTE - Run backtest & generate metrics and trades list
     bt_df = bt.run(oof_df, prices)
     metrics = bt.performance_metrics(bt_df)
     trade_stats  = bt.trade_stats(bt_df)
@@ -352,6 +331,7 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
     trades_made_df = trades_made_df.assign(run_id=run_id, symbol=stock_name)
     bt_df = bt_df.assign(run_id=run_id, symbol=stock_name)
     
+    # Save backtest results
     bt.save_backtest_artifacts(
         base_dir=f'{backtest_output_path}{stock_name}/{model_type}/',
         run_row=run_row,
@@ -359,31 +339,164 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
         trades_df=trades_made_df
     )
 
-    # NOTE - Results (Clean this up)
+    # NOTE - Results
     pretty_print_json(metrics)
-    pretty_print_json(trade_stats )
+    pretty_print_json(trade_stats)
     create_folder(f'{backtest_output_path}{stock_name}/{model_type}/graphs/')
     bt.plot_equity_curve(bt_df, title="OOF Strategy Equity Curve (10d model)", save_path=f'{backtest_output_path}{stock_name}/{model_type}/graphs/equity_curve.png')
     bt.plot_positions(bt_df, title="OOF Position (10d model)", save_path=f'{backtest_output_path}{stock_name}/{model_type}/graphs/positions.png')
-    # This not working
-    # bt.save(bt_df, {**metrics, **trade_stats}, name=f'{model_type}_h{horizon_days}_long_only')
 
 
 
-def run_backtests():
 
-    ticker_list = [
-        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    ]
+def run_backtests(ticker_list:list):
+    ''' Function to run all backtests for trained ensemble models
+    '''
     for stock_name in ticker_list:
-        backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
-                                    model_type='xgb',
-                                    stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-                                    stock_name=stock_name,
-                                    backtest_output_path="data/results/backtests/")
+        for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
+            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
+                                        model_type=ensemble_type,
+                                        stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+                                        stock_name=stock_name,
+                                        backtest_output_path="data/results/backtests/")
+            
+
+    # Compare backtest results for all trained models for a given stock
 
 
+
+
+
+# def run_backtests_and_compare_results():
+#     ''' Function to run backtests for a given stock and then analyse model performance against counterparts
+#     '''
+#     ticker_list = [
+#         "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+#         "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+#     ]
+#     for stock_name in ticker_list:
+#         for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
+#             backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
+#                                         model_type=ensemble_type,
+#                                         stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+#                                         stock_name=stock_name,
+#                                         backtest_output_path='data/results/backtests/')
+            
+#         backtest_output_path=f"data/results/backtests/{stock_name}/"
+
+
+
+def run_backtests_with_comparison(ticker_list:list, feat_dict_path:str):
+    # ticker_list = [
+    #     "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+    #     "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+    # ]
+    feature_dict = load_JSON_object(feat_dict_path)
+    for stock_name in ticker_list:
+        stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
+        prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
+
+        # You need to load y_dev/y_test + dates_dev/dates_test from your dataset split function
+        X, y, dates = split_train_val_test(
+            file_path=stock_hist_path,
+            feature_cols=feature_dict[stock_name],
+            target_col="signal_voladj_10d"
+        )
+        X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
+
+        model_pred_paths = {
+            "XGBoost_V1": {
+                "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_oof.parquet",
+                "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
+            },
+            "LGBM_V1": {
+                "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_oof.parquet",
+                "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
+            },
+            # "QKernelSVC_depth2": {
+            #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_oof.parquet",
+            #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
+            # }
+        }
+
+        out_dir = f"data/results/model_comparisons/{stock_name}/"
+        evaluate_models_for_stock(
+            stock_name=stock_name,
+            prices=prices,
+            dev_dates=dates_dev,
+            test_dates=dates_test,
+            y_dev=y_dev,
+            y_test=y_test,
+            model_pred_paths=model_pred_paths,
+            out_dir=out_dir,
+            horizon_days=10,
+        )
+
+
+
+def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: np.ndarray, test_dates: np.ndarray, y_dev: np.ndarray, y_test: np.ndarray, model_pred_paths: Dict[str, Dict[str, str]], out_dir: str, horizon_days: int = 10):
+    ''' model_pred_paths:
+        {
+            "XGBoost_V1": {"dev": "...parquet", "test": "...parquet"},
+            "LGBM_V1":    {"dev": "...parquet", "test": "...parquet"},
+            "QKernel...": {"dev": "...parquet", "test": "...parquet"},
+        }
+        Each parquet should contain columns: p_class_0,p_class_1,p_class_2 (and optionally y_pred)
+        and be indexed by date or have a date column.
+    '''
+    # Initialise evaluator
+    evaluator = StockModelEvaluator(
+        stock_name=stock_name,
+        prices=prices,
+        BackTestClass=BackTest,
+        BacktestConfigClass=BacktestConfig,
+        horizon_days=horizon_days,
+    )
+
+    # Register each model (dev + test)
+    for model_tag, paths in model_pred_paths.items():
+        preds_dev = pd.read_parquet(paths["dev"])
+        preds_test = pd.read_parquet(paths["test"])
+
+        # Ensure date index if parquet stored date column
+        if "date" in preds_dev.columns:
+            preds_dev["date"] = pd.to_datetime(preds_dev["date"])
+            preds_dev = preds_dev.set_index("date").sort_index()
+        if "date" in preds_test.columns:
+            preds_test["date"] = pd.to_datetime(preds_test["date"])
+            preds_test = preds_test.set_index("date").sort_index()
+
+        evaluator.register_model(
+            model_tag,
+            preds_dev=preds_dev,
+            preds_test=preds_test,
+            y_dev=y_dev,
+            y_test=y_test,
+            dates_dev=dev_dates,
+            dates_test=test_dates,
+        )
+
+    # Run evaluation + robustness grid
+    summary_df, details = evaluator.evaluate_all_models(
+        stress=StressGrid(),
+        base_transaction_cost=0.0005,
+        base_execution_lag=1,
+        base_entry_threshold=0.20,
+    )
+
+    # Save outputs
+    create_folder(out_dir)
+    summary_path = os.path.join(out_dir, f"{stock_name}_model_comparison.parquet")
+    summary_df.to_parquet(summary_path, index=False)
+
+    # Save stress tests (one parquet per model)
+    for model_tag, res in details.items():
+        if "stress_test" in res and res["stress_test"] is not None:
+            stress_df = res["stress_test"]
+            stress_df.to_parquet(os.path.join(out_dir, f"{stock_name}_{model_tag}_stress.parquet"), index=False)
+
+    print(summary_df)
+    return summary_df, details
 
 
 
@@ -400,10 +513,21 @@ def main():
                 * QML models
             - Perform backtest
     '''
+    ticker_list = [
+        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+    ]
 
+    architecture_list = ['ensemble']  # quantum
+    
     # NOTE - For running the entire pipelien in plan above 
-    run_full_pipeline()
+    # run_full_pipeline(
+    #     ticker_list, 
+    #     download_path='data/csv/historical/training/raw/',
+    #     architectrure_list=architecture_list
+    # )
 
+    run_backtests_with_comparison(ticker_list, feat_dict_path='data/json/stock_key_features.json')
 
     # run_backtests()
 

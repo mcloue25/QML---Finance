@@ -8,8 +8,6 @@ import ChartCard from "../ui/ChartCard";
 import LoadingBlock from "../ui/LoadingBlock";
 import type { SeriesRow } from "../types";
 import SmartTooltip from "./SmartTooltip";
-// import SmartTooltip from "../../charts/SmartTooltip";
-// import { CHART, axisTick, fmtDate } from "./charts/chartTheme";
 import {CHART, axisTick, fmtDate} from "./chartTheme"
 
 export default function EquityCurveCard({

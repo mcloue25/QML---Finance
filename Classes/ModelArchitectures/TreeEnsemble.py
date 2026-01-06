@@ -235,24 +235,31 @@ def build_oof_df(dates, y_true, oof_pred, oof_proba, horizon, model_name):
 
 
 
-def analyse_ensemble_results(results_dict:dict, y_test:list, dates_dev, y_dev:list, arch_name:str, output_path:str):
-    ''' Main fucntion for analysing a set of ensemble results
+def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev: list, arch_name: str, output_path: str, dates_test=None):
+    ''' Main function for analysing a set of ensemble results 
     '''
-    # Create output folder
     create_folder(output_path)
     create_folder(f'{output_path}graphs/')
 
-    print(results_dict.keys())
-    # Visualise Learning process
+    # CV diagnostics
     plotter = Plotter('')
-    # plotter.plot_train_val(results['hist'])
-    print()
-    plotter.plot_hist(subset_dict(results_dict['hist'], ['log_loss', 'fold']), title='Loss Hist', xaxis='fold', yaxis='log_loss', save_path=f'{output_path}graphs/CV_fold_hist.png')
-    # Plot confusion Matrices
-    plotter.plot_confusion_matrices(y_test, results_dict['test_pred'], labels=[0, 1, 2], class_names=CLASS_STRS, title_prefix="Test", save_path=f'{output_path}graphs/confusion_matrix.png')
-    
-    
-    # Save oof
+    plotter.plot_hist(
+        subset_dict(results_dict['hist'], ['log_loss', 'fold']),
+        title='Loss Hist',
+        xaxis='fold',
+        yaxis='log_loss',
+        save_path=f'{output_path}graphs/CV_fold_hist.png'
+    )
+
+    plotter.plot_confusion_matrices(y_test,
+        results_dict['test_pred'],
+        labels=[0, 1, 2],
+        class_names=CLASS_STRS,
+        title_prefix="Test",
+        save_path=f'{output_path}graphs/confusion_matrix.png'
+    )
+
+    # NOTE - Save DEV / OOF predictions 
     oof_df = build_oof_df(
         dates_dev,
         y_dev,
@@ -261,4 +268,25 @@ def analyse_ensemble_results(results_dict:dict, y_test:list, dates_dev, y_dev:li
         horizon=20,
         model_name=arch_name
     )
-    oof_df.to_parquet(f"{output_path}{arch_name}.parquet")
+
+    oof_path = f"{output_path}{arch_name}_oof.parquet"
+    oof_df.to_parquet(oof_path)
+
+    # NOTE - Save test predictions
+    if dates_test is not None:
+        test_df = build_oof_df(
+            dates_test,
+            y_test,
+            results_dict['test_pred'],
+            results_dict['test_proba'],
+            horizon=20,
+            model_name=arch_name
+        )
+
+        test_path = f"{output_path}{arch_name}_test.parquet"
+        test_df.to_parquet(test_path)
+
+        print(f"Saved:\n  {oof_path}\n  {test_path}")
+    else:
+        print(f"Saved:\n  {oof_path} (test preds not saved: dates_test missing)")
+
