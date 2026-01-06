@@ -525,11 +525,11 @@ def main():
     architecture_list = ['ensemble']  # quantum
     
     # NOTE - For running the entire pipelien in plan above 
-    run_full_pipeline(
-        ticker_list, 
-        download_path='data/csv/historical/training/raw/',
-        architectrure_list=architecture_list
-    )
+    # run_full_pipeline(
+    #     ticker_list, 
+    #     download_path='data/csv/historical/training/raw/',
+    #     architectrure_list=architecture_list
+    # )
 
     # NOTE - creates backtests for all ensemble models
     # run_backtests(ticker_list)
