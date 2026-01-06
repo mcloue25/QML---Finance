@@ -406,15 +406,15 @@ def run_backtests_with_comparison(ticker_list:list, feat_dict_path:str):
 
         model_pred_paths = {
             "XGBoost_V1": {
-                "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_oof.parquet",
+                "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
                 "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
             },
             "LGBM_V1": {
-                "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_oof.parquet",
+                "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
                 "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
             },
             # "QKernelSVC_depth2": {
-            #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_oof.parquet",
+            #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
             #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
             # }
         }
@@ -521,11 +521,11 @@ def main():
     architecture_list = ['ensemble']  # quantum
     
     # NOTE - For running the entire pipelien in plan above 
-    # run_full_pipeline(
-    #     ticker_list, 
-    #     download_path='data/csv/historical/training/raw/',
-    #     architectrure_list=architecture_list
-    # )
+    run_full_pipeline(
+        ticker_list, 
+        download_path='data/csv/historical/training/raw/',
+        architectrure_list=architecture_list
+    )
 
     run_backtests_with_comparison(ticker_list, feat_dict_path='data/json/stock_key_features.json')
 

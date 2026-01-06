@@ -269,7 +269,7 @@ def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev:
         model_name=arch_name
     )
 
-    oof_path = f"{output_path}{arch_name}_oof.parquet"
+    oof_path = f"{output_path}{arch_name}.parquet"
     oof_df.to_parquet(oof_path)
 
     # NOTE - Save test predictions
