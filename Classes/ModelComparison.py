@@ -243,8 +243,6 @@ class StockModelEvaluator:
             raise KeyError(f"Model '{model_tag}' not registered.")
 
         m = self._models[model_tag]
-        print(m)
-        a-b
         proba_cols = m["proba_cols"]
 
         # Probability quality (DEV and TEST)
@@ -320,7 +318,7 @@ class StockModelEvaluator:
         base_entry_threshold: float = 0.20,
         hold_rule: str = "signal_until_change",
         mode: str = "long_only",
-    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    ):
         '''
         Evaluate all registered models.
 

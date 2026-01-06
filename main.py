@@ -367,22 +367,16 @@ def run_backtests(ticker_list:list):
 
 
 
-# def run_backtests_and_compare_results():
-#     ''' Function to run backtests for a given stock and then analyse model performance against counterparts
-#     '''
-#     ticker_list = [
-#         "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-#         "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-#     ]
-#     for stock_name in ticker_list:
-#         for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
-#             backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
-#                                         model_type=ensemble_type,
-#                                         stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
-#                                         stock_name=stock_name,
-#                                         backtest_output_path='data/results/backtests/')
-            
-#         backtest_output_path=f"data/results/backtests/{stock_name}/"
+def run_backtests(ticker_list:list):
+    ''' Function to run backtests for a given stock and then analyse model performance against counterparts
+    '''
+    for stock_name in ticker_list:
+        for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
+            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
+                                        model_type=ensemble_type,
+                                        stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+                                        stock_name=stock_name,
+                                        backtest_output_path='data/results/backtests/')
 
 
 
@@ -521,28 +515,17 @@ def main():
     architecture_list = ['ensemble']  # quantum
     
     # NOTE - For running the entire pipelien in plan above 
-    run_full_pipeline(
-        ticker_list, 
-        download_path='data/csv/historical/training/raw/',
-        architectrure_list=architecture_list
-    )
+    # run_full_pipeline(
+    #     ticker_list, 
+    #     download_path='data/csv/historical/training/raw/',
+    #     architectrure_list=architecture_list
+    # )
 
+    # NOTE - creates backtests for all ensemble models
+    # run_backtests(ticker_list)
+
+    # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
     run_backtests_with_comparison(ticker_list, feat_dict_path='data/json/stock_key_features.json')
-
-    # run_backtests()
-
-    # NOTE - TESTING
-    # stock_name='BTC-USD'
-    # backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet', 
-    #                             model_type='xgb',
-    #                             stock_hist_path='data/csv/historical/training/cleaned/BTC-USD.csv',
-    #                             stock_name=stock_name,
-    #                             backtest_output_path="data/results/backtests/")
-
-
-    # features_dict = load_JSON_object('data/json/stock_key_features.json')
-    # stock_name='BTC-USD'
-    # quantum_model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', feat_list=features_dict[stock_name])
 
 
 if __name__ == "__main__":
