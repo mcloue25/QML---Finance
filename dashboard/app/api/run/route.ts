@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import parquet from "parquetjs-lite"; 
+import parquet from "@dsnp/parquetjs"; 
 
 export const runtime = "nodejs";
 
@@ -41,29 +41,32 @@ function parseLimit(raw: string | null, fallback: number) {
   return Math.max(0, Math.min(200_000, Math.floor(n)));
 }
 
-async function readParquetToJson(parquetPath: string, limit = 50000): Promise<any[]> {
-  console.log("[parquet] attempting to open:", parquetPath);
-  const stat = await fs.stat(parquetPath);
-  console.log("[parquet] file size (bytes):", stat.size);
+function jsonSafe<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v))
+  );
+}
+
+async function readParquetToJson(filePath: string, limit = 10000) {
+  console.log("[parquet] attempting to open:", filePath);
+
+  const reader = await parquet.ParquetReader.openFile(filePath, { useBigInt: false } as any);
+  const cursor = reader.getCursor();
+  const rows: any[] = [];
 
   try {
-    const reader = await parquet.ParquetReader.openFile(parquetPath);
-    try {
-      const cursor = reader.getCursor();
-      const rows: any[] = [];
-      for (let i = 0; i < limit; i++) {
-        const row = await cursor.next();
-        if (!row) break;
-        rows.push(row);
-      }
-      return rows;
-    } finally {
-      await reader.close();
+    for (let i = 0; i < limit; i++) {
+      const row = await cursor.next();
+      if (!row) break;
+
+      // IMPORTANT: BigInt -> string before any JSON or further processing
+      rows.push(jsonSafe(row));
     }
-  } catch (e: any) {
-    console.error("[parquet] open/read failed:", parquetPath, e);
-    throw e;
+  } finally {
+    await reader.close();
   }
+
+  return rows;
 }
 
 function toNum(x: any): number | null {

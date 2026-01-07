@@ -1,30 +1,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
-import TopBar from "./TopBar";
-import FiltersCard from "./FiltersCard";
-import KpiRow from "./KpiRow";
-
-import EquityCurveCard from "./charts/EquityCurveCard";
-import DrawdownCard from "./charts/DrawdownCard";
-import ExposureCard from "./charts/ExposureCard";
-import ProbabilitiesCard from "./charts/ProbabilitiesCard";
-import SignalScatterCard from "./charts/SignalScatterCard";
+import RunAnalysisTab from "./RunAnalysisTab";
+import PortfolioTab from "./PortfolioTab";
+import TradesTab from "./TradesTab";
+import ModelCompareTab from "./ModelCompareTab";
 
 import type { Catalog, RunPayload, BaselinePayload, SeriesRow, HeaderVM } from "./types";
-
-function SkeletonCard({ className = "" }: { className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-border bg-card/60 shadow-sm ${className}`}>
-      <div className="p-5">
-        <div className="h-4 w-40 rounded bg-muted/60" />
-        <div className="mt-4 h-48 w-full rounded-xl bg-muted/40" />
-      </div>
-    </div>
-  );
-}
+import { DashboardNavbar } from "./DashboardNavbar";
 
 function InlineAlert({
   title,
@@ -48,6 +32,20 @@ function InlineAlert({
   );
 }
 
+
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <span>{title}</span>
+      <span className="h-px flex-1 bg-border" />
+    </h2>
+  );
+}
+
+
+
+
 export default function BacktestDashboard() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
 
@@ -56,7 +54,6 @@ export default function BacktestDashboard() {
 
   const [query, setQuery] = useState("");
   const [modelType, setModelType] = useState("xgb");
-
   const [horizon, setHorizon] = useState<number | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
 
@@ -69,34 +66,65 @@ export default function BacktestDashboard() {
   const [runStatus, setRunStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [runError, setRunError] = useState<string | null>(null);
 
+  // Getting backtest trade data & stock history
+  const [trades, setTrades] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
+
+
+  // Load assets for dropdown + tickers list (left sidebar in Trades tab)
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/assets");
       const json = await res.json();
-
       if (!res.ok || !json.ok) {
         console.error("Failed to load assets:", json);
         return;
       }
-
       setAssets(json.assets ?? []);
       setAsset((prev) => prev ?? (json.assets?.[0] ?? null));
     })();
   }, []);
 
+
+  // Load catalog for model types + run ids
   useEffect(() => {
     (async () => {
       const res = await fetch("/api/catalog");
       if (!res.ok) return;
-
       const json = (await res.json()) as Catalog;
       setCatalog(json);
-
       setModelType((prev) => prev ?? (json.model_types?.[0] ?? "xgb"));
       setHorizon((prev) => prev ?? (json as any)?.horizons?.[0] ?? null);
     })();
   }, []);
 
+
+  // UseEffect for loading trades data 
+  useEffect(() => {
+    if (!asset || !modelType || !runId) {
+      setTrades([]);
+      return;
+    }
+    (async () => {
+      const res = await fetch(`/api/trades?asset=${asset}&model=${modelType}&run=${runId}`);
+      const json = await res.json();
+      setTrades(json.ok ? json.trades ?? [] : []);
+    })();
+  }, [asset, modelType, runId]);
+
+
+
+  // UseEffect for loading stock historical data
+  useEffect(() => {
+    if (!asset) return;
+
+    fetch(`/api/history?asset=${asset}`)
+      .then((r) => r.json())
+      .then((j) => setHistory(j.ok ? j.rows : []));
+  }, [asset]);
+
+
+  // Run IDs for current asset + model
   const allRunIds = useMemo<string[]>(() => {
     if (!catalog?.runs || !asset) return [];
     const byModel = catalog.runs[asset];
@@ -105,6 +133,9 @@ export default function BacktestDashboard() {
     return Array.isArray(ids) ? ids : [];
   }, [catalog, asset, modelType]);
 
+
+
+  // Filter run ids by query
   const runIds = useMemo<string[]>(() => {
     if (!query) return allRunIds;
     const q = query.toLowerCase().trim();
@@ -112,6 +143,9 @@ export default function BacktestDashboard() {
     return allRunIds.filter((id) => id.toLowerCase().includes(q));
   }, [allRunIds, query]);
 
+
+
+  // Default runId when list changes
   useEffect(() => {
     if (!runIds.length) {
       setRunId(null);
@@ -120,13 +154,14 @@ export default function BacktestDashboard() {
     setRunId((prev) => (prev && runIds.includes(prev) ? prev : runIds[0]));
   }, [runIds]);
 
+
+
+  // Load a run
   useEffect(() => {
     if (!asset || !modelType || !runId) return;
-
     (async () => {
       setRunStatus("loading");
       setRunError(null);
-
       const res = await fetch(
         `/api/run?asset=${encodeURIComponent(asset)}&model=${encodeURIComponent(
           modelType
@@ -140,12 +175,14 @@ export default function BacktestDashboard() {
         setRunError(json?.error || json?.detail || "Unknown error");
         return;
       }
-
       setRun(json as RunPayload);
       setRunStatus("ok");
     })();
   }, [asset, modelType, runId]);
 
+
+
+  // Baseline is per-asset (optional)
   useEffect(() => {
     if (!asset) return;
     (async () => {
@@ -162,6 +199,9 @@ export default function BacktestDashboard() {
     })();
   }, [asset]);
 
+
+
+  // Series for charts
   const series = useMemo<SeriesRow[]>(() => {
     if (!run?.bt) return [];
     const bt = run.bt;
@@ -191,9 +231,11 @@ export default function BacktestDashboard() {
     });
   }, [run, baseline]);
 
+
+
+  // Header view model for KPI row (shown inside RunAnalysisTab now)
   const header = useMemo<HeaderVM | null>(() => {
     if (!run?.meta || !run?.metrics) return null;
-
     const model = run.meta.model_type?.toUpperCase?.() || "MODEL";
     const runLabel = runId ? ` • run=${runId.slice(0, 8)}` : "";
 
@@ -207,6 +249,7 @@ export default function BacktestDashboard() {
         (run.meta as any).transaction_cost_bps != null
           ? `${(run.meta as any).transaction_cost_bps} bps`
           : "—",
+
       annualReturn: run.metrics.annual_return,
       vol: run.metrics.annual_volatility,
       sharpe: run.metrics.sharpe,
@@ -214,6 +257,7 @@ export default function BacktestDashboard() {
       turnover: run.metrics.avg_turnover_per_year,
       tim: run.metrics.pct_time_in_market,
       hit: run.metrics.hit_rate,
+
       totalLogReturn: (run.metrics as any).total_log_return ?? null,
       nEntries: (run.metrics as any).n_entries ?? null,
       avgTradeDays: (run.metrics as any).avg_trade_duration_days ?? null,
@@ -221,23 +265,52 @@ export default function BacktestDashboard() {
     };
   }, [run, runId]);
 
-  const isLoading = runStatus === "loading";
   const hasError = runStatus === "error";
   const isEmpty = runStatus === "ok" && !run?.bt?.length;
 
+
+
   return (
-    <div className="min-h-screen bg-background">
-      {/* App shell background */}
+    <div className="min-h-screen bg-background" id="top">
       <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-muted/40 via-background to-background" />
 
-      {/* Sticky header */}
-      {/* <div className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur">
-        <TopBar header={header} runId={runId} />
-      </div> */}
+      {/* Sticky navbar (full width) */}
+      <DashboardNavbar />
 
-      <div className="mx-auto max-w-7xl px-4 py-6">
-        <div className="space-y-4">
-          <FiltersCard
+      <div className="mx-auto max-w-7xl px-4 py-6 space-y-10">
+        {/* Status
+        <div className="flex justify-end text-xs text-muted-foreground">
+          {runStatus === "loading"
+            ? "Loading…"
+            : runStatus === "ok"
+            ? "Updated"
+            : runStatus === "error"
+            ? "Error"
+            : null}
+        </div> */}
+
+        {/* Portfolio */}
+        <section id="portfolio" className="scroll-mt-24 space-y-4">
+          <SectionHeader title="Portfolio" />
+          <PortfolioTab />
+        </section>
+
+        {/* Run analysis */}
+        <section id="run" className="scroll-mt-24 space-y-4">
+          <SectionHeader title="Run Analysis" />
+          {hasError ? (
+            <InlineAlert title="Couldn’t load this run" detail={runError} variant="error" />
+          ) : null}
+
+          {isEmpty ? (
+            <InlineAlert
+              title="No backtest rows found for this run."
+              detail="Try another run id or asset/model."
+              variant="info"
+            />
+          ) : null}
+
+          <RunAnalysisTab
             assets={assets}
             catalog={catalog}
             asset={asset}
@@ -252,96 +325,27 @@ export default function BacktestDashboard() {
             setRunId={setRunId}
             runIds={runIds}
             header={header}
+            baseline={baseline}
+            series={series}
+            view={view}
+            setView={setView}
+            posView={posView}
+            setPosView={setPosView}
+            isLoading={runStatus === "loading"}
           />
+        </section>
 
-          {hasError ? (
-            <InlineAlert title="Couldn’t load this run" detail={runError} variant="error" />
-          ) : null}
+        {/* Trades */}
+        <section id="trades" className="scroll-mt-24 space-y-4">
+          <SectionHeader title="Trades" />
+          <TradesTab trades={trades} /> 
+        </section>
 
-          {isEmpty ? (
-            <InlineAlert title="No backtest rows found for this run." detail="Try another run id or asset/model." variant="info" />
-          ) : null}
-
-          {/* KPIs can still show skeleton while loading */}
-          <div className={isLoading ? "opacity-60" : ""}>
-            <KpiRow header={header} />
-          </div>
-        </div>
-
-        <Tabs defaultValue="performance" className="mt-6">
-          <div className="flex items-center justify-between gap-3">
-            <TabsList className="h-10 rounded-2xl bg-muted/40 p-1">
-              <TabsTrigger className="rounded-xl px-3" value="performance">
-                Performance
-              </TabsTrigger>
-              <TabsTrigger className="rounded-xl px-3" value="risk">
-                Risk &amp; Exposure
-              </TabsTrigger>
-              <TabsTrigger className="rounded-xl px-3" value="diagnostics">
-                Diagnostics
-              </TabsTrigger>
-              <TabsTrigger className="rounded-xl px-3" value="compare">
-                Compare
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Optional: place lightweight status on the right */}
-            <div className="text-xs text-muted-foreground">
-              {isLoading ? "Loading…" : runStatus === "ok" ? "Updated" : null}
-            </div>
-          </div>
-
-          <TabsContent value="performance" className="mt-4">
-            {isLoading ? (
-              <div className="grid gap-4 md:grid-cols-12">
-                <SkeletonCard className="md:col-span-8" />
-                <SkeletonCard className="md:col-span-4" />
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-12">
-                <EquityCurveCard
-                  series={series}
-                  hasBaseline={!!baseline?.bt}
-                  view={view}
-                  setView={setView}
-                />
-                <DrawdownCard series={series} hasBaseline={!!baseline?.bt} view={view} />
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="risk" className="mt-4">
-            {isLoading ? (
-              <div className="grid gap-4 md:grid-cols-12">
-                <SkeletonCard className="md:col-span-12" />
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-12">
-                <ExposureCard series={series} posView={posView} setPosView={setPosView} header={header} />
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="diagnostics" className="mt-4">
-            {isLoading ? (
-              <div className="grid gap-4 md:grid-cols-12">
-                <SkeletonCard className="md:col-span-6" />
-                <SkeletonCard className="md:col-span-6" />
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-12">
-                <ProbabilitiesCard series={series} />
-                <SignalScatterCard series={series} />
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="compare" className="mt-4">
-            <div className="rounded-2xl border border-border bg-card/60 p-6 text-sm text-muted-foreground shadow-sm">
-              Cross-run comparison coming next (scatter + sortable table using catalog.runs).
-            </div>
-          </TabsContent>
-        </Tabs>
+        {/* Model comparison */}
+        <section id="models" className="scroll-mt-24 space-y-4">
+          <SectionHeader title="Model comparison" />
+          <ModelCompareTab />
+        </section>
       </div>
     </div>
   );
