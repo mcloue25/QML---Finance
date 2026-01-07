@@ -86,13 +86,13 @@ export default function RunAnalysisTab(props: {
   } = props;
 
   return (
-    <div>
+    <div className="scroll-mt-24 space-y-4">
       <div className={isLoading ? "opacity-60" : ""}>
         <KpiRow header={header} />
       </div>
-
+      
       <Tabs defaultValue="performance">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 ">
           <TabsList className="h-10 rounded-2xl bg-muted/40 p-1">
             <TabsTrigger className="rounded-xl px-3" value="performance">
               Performance

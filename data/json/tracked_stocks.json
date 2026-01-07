@@ -1,0 +1,37 @@
+{
+    "crypto": [
+        "BTC-USD","ETH-USD","BNB-USD","SOL-USD","XRP-USD","ADA-USD","DOGE-USD","TRX-USD","AVAX-USD","DOT-USD","MATIC-USD","LTC-USD","LINK-USD","ATOM-USD","XLM-USD","UNI-USD","ETC-USD","ICP-USD","FIL-USD","APT-USD","NEAR-USD","ARB-USD","OP-USD","ALGO-USD","EOS-USD","USDT-USD"
+    ],
+    
+    "minerals": [
+        "GC=F","SI=F","PL=F","PA=F","CL=F","BZ=F","NG=F","HG=F","ALI=F","ZN=F","XOM","CVX","BP","SHEL","COP","RIO","BHP","FCX","NEM","GOLD"
+    ],
+
+    "tech": [
+        "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","AMD","INTC","TSM","ASML","AVGO","QCOM","MU","ORCL","CRM","ADBE","NOW","SNOW","DDOG","MDB","NFLX","PYPL","SHOP","XYZ","UBER","ABNB"
+    ],
+
+    "financials": [
+        "JPM","BAC","GS","MS","WFC","C","V","MA","AXP","PYPL","BLK","SCHW","SPGI","ICE"
+    ],
+
+    "healthcare": [
+        "JNJ","PFE","MRK","LLY","ABBV","UNH","CVS","MDT","BMY","AMGN","GILD","REGN","VRTX"
+    ],
+
+    "consumer": [
+        "PG","KO","PEP","WMT","COST","MCD","NKE","DIS","SBUX","HD","LOW","TGT"
+    ],
+
+    "industrials": [
+        "BA","CAT","DE","GE","HON","UPS","FDX","LMT","RTX","NOC"
+    ],
+
+    "real_estate": [
+        "AMT","PLD","EQIX","SPG","O","VTR","DLR","PSA"
+    ],
+    
+    "etfs": [
+        "SPY","QQQ","DIA","IWM","XLK","XLE","XLF","XLV","GLD","SLV","USO","ARKK"
+    ]
+}

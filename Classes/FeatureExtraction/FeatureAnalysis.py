@@ -203,9 +203,9 @@ class FeatureAnalyser:
 
         # Check coefficient makes economic sense
         coef_analysis = self.analyse_coefficient_consistency(final_features, results_dir=self.results_dir)
-        print("-"*40)
-        print('coef_analysis:')
-        print(coef_analysis)
+        # print("-"*40)
+        # print('coef_analysis:')
+        # print(coef_analysis)
 
         # Prep X & Y for testing using final feature set
         target = target_col.replace(f'{self.stock}_', '')

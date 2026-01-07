@@ -216,10 +216,13 @@ class FeatureBuilder:
         slopes = np.full(len(series), np.nan)
         x = np.arange(window).reshape(-1, 1)
 
-        for i in range(window, len(series)):
-            y = series.iloc[i-window:i].values.reshape(-1, 1)
-            model = LinearRegression().fit(x, y)
-            slopes[i] = model.coef_[0][0]
+        for i in range(window, len(series) + 1):
+            y = series.iloc[i-window:i].to_numpy(dtype=float)
+            if np.isnan(y).any():
+                continue  # keep NaN slope
+
+            model = LinearRegression().fit(x, y.reshape(-1, 1))
+            slopes[i-1] = model.coef_[0][0]
 
         self.df[f"momentum_slope_{window}d"] = slopes
 

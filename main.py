@@ -35,7 +35,10 @@ def download_data(ticker_list:list, period:str, output_path:str):
 
 
 def feature_engineering(folder_path:str, output_path:str=None):
-    '''  
+    '''  Function for generating featureset that we will then prune down to only the core features after feature analysis
+    Args:
+        folder_path (String) : Folder path to folder of historical CSV data
+        output_path (String) : Output folder path for updated CSV with additional feature columns added
     '''
     for file in os.listdir(folder_path):
         print(f'Generating Feature Set for {file.split(".")[0]}')
@@ -47,6 +50,9 @@ def feature_engineering(folder_path:str, output_path:str=None):
 
 def generate_importance_statistics(input_path:str, stock:str=None):
     ''' Main function for generating statistics for each features relative importance and reliability
+    Args:
+        input_path (String) : Folder path for updated CSV's with additional feature columns added
+        stock (String) : Name of stock whos features are being analysed
     ''' 
     # Standardised testing features
     feature_cols = [
@@ -98,7 +104,7 @@ def feature_analysis(input_path:str, stock:str=None):
     # Compare feature results
     csv_folder = f'data/csv/feature_analysis/{stock}/'
     run_ids = os.listdir(csv_folder)
-    fa = FeatureAnalyser(results_dir=csv_folder, hist_path=f'{input_path}{stock}.csv', stock=stock, run_ids=run_ids, top_k=5, show_results=True)
+    fa = FeatureAnalyser(results_dir=csv_folder, hist_path=f'{input_path}{stock}.csv', stock=stock, run_ids=run_ids, top_k=5, show_results=False)
     key_features = fa.stability_df.loc[fa.stability_df["stability_class"].isin(["keep", "conditional"])]
     return list(key_features.index)
 
@@ -147,30 +153,46 @@ def time_train_test_split(X, y, dates, test_size=0.2):
 
 
 
-def run_full_pipeline(ticker_list:list, download_path:str, architectrure_list:list):
+def run_full_pipeline(ticker_object:list, download_path:str, architectrure_list:list):
     ''' Function to run the entire pipeline for all stocks from ends to end 
         Does:
             * Downloads all stock tickers
             * Generates Features
             * Assesses Relevance of generated features & keeps only core featureset
             * Trains Ensemble & Quantum models & saves results to parquet file
+    Args:
+        ticker_object (Dict) : Dict Where K == Economic sector && V == List of stock symbols to download data for within that sector
+        download_path (String) : Folder path to download all stock historical data to
+        architectrure_list (List) : List of different architectures to train models under ['ensembles' or 'quantum']
+    Returns:
+        Generates expanded feature set CSV for all stock symbols
+        Trains model architecture variant for each model in architecture list
+        Saves portfolio_key_features to JSON for analysis of what features tend to matter more in a given sector & for risk analysis
     '''
     # Download all ticker data
-    # download_data(ticker_list, period="max", output_path=download_path)
+    # for sector, ticker_list in tqdm(ticker_object.items(), desc='Downloading Sector Data...'):
+    #     download_data(ticker_list, period="max", output_path=download_path)
 
     # Geneerate features for all downloaded ticker data
     # feature_engineering(download_path, output_path='data/csv/historical/training/cleaned/')
-    
-    features_dict = {}
-    for stock_name in ticker_list:
-        # Analyse Feature importance for modelling
-        key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
-        features_dict[stock_name] = key_features
-        
-        # NOTE - Main function for training classical & quantum models
-        model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features, architectures=architectrure_list)
-    
-    save_JSON_object(features_dict, 'data/json/stock_key_features.json')
+
+    # Iterate through each sector/tickeer_list combo & train models + store key features to JSON obeject
+    portfolio_key_features = {}
+    for sector, ticker_list in ticker_object.items():
+        portfolio_key_features[sector] = {}
+        for stock_name in ticker_list:
+            # Analyse Feature importance for modelling
+            key_features = feature_analysis('data/csv/historical/training/cleaned/', stock=stock_name)
+            # key_features = ['feat_1', 'feat_2', 'feat_3']
+            portfolio_key_features[sector][stock_name] = key_features
+            
+            # NOTE - Main function for training classical & quantum models
+            # NOTE - Having some issue here with either USDC-USD or USDT-USD
+            # try:
+            #     model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features, architectures=architectrure_list)
+            # except:
+            #     continue
+    save_JSON_object(portfolio_key_features, 'data/json/portfolio_key_features.json')
     
 
 
@@ -182,6 +204,8 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10,
         csv_path (String) : PAth to historical data CSV 
         stock_name (String) : Name of stock being modelled
         feat_list (List) : List of key features after feature improtance pipeline has been applied
+        horizon (Int) : Preferred horizon date
+        architectures (List) : List of potential architectures to train from
     '''
     # Load dataset
     X, y, dates = split_train_val_test(
@@ -195,7 +219,7 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10,
 
     # Create splits to be used by classicial DL and QML modelling
     splits = make_walkforward_splits(X_dev, n_splits=5, gap=horizon)
-
+    
     # NOTE - Train ensembles
     if 'ensemble' in architectures:
         ensemble_model_training(
@@ -219,6 +243,17 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10,
 
 def ensemble_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits):
     '''  Mian fucntion for training ensemble models to compare against QML counterparts
+    Args:
+        stock_name (String) : String stock name
+        X_dev (np.ndarray) : X training features
+        y_dev (List) : List of ground truthy train & val results
+        dates_dev (Series) : Dates column for training features
+        X_test (np.ndarray) : X test features
+        y_test (List) : List of ground truth test results
+        dates_test (Series) : Dates column for test features
+        splits () : Folds of time-series correct data
+    Returns:
+        Trains anmd
     '''
     create_folder(f"data/results/trained_models/ensembles/{stock_name}/")
 
@@ -388,53 +423,72 @@ def run_backtests(ticker_list:list):
 
 
 
-def run_backtests_with_comparison(ticker_list:list, feat_dict_path:str):
+
+def get_sector_by_symbol(key_features_object):
+    ''' Inverts the architecture of a dict of depth 2
+    Args:
+        key_features_object (Dict) : Dict where K == Sector && V == Dict where K == Ticker symbol && V == List of core features
+    Returns:
+        inverted (Dict) : 1D dict where K == ticker symbols && V == Sector they belong to
+    '''
+    inverted = {}
+    for sector, symbol_feats_dict in key_features_object.items():
+        inverted = {**inverted, **{symbol : sector for symbol, _ in symbol_feats_dict.items()}}
+    return inverted
+
+
+
+def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
     ''' Function to replace current run_bakctests() where it will run backtests for all different model architectures & then compare their results and assess their validity
     Args:
         ticker_list (List) : List of ticker symbols
         feat_dict_path (String) : String to JSON obejct where K==ticker symbol && V== list of core features generated for that symbol
     '''
-    feature_dict = load_JSON_object(feat_dict_path)
-    for stock_name in ticker_list:
-        stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
-        prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
+    # Need to invert key features dict so we know what sector each symbol belongs to
+    key_features_object = load_JSON_object(feat_dict_path)
+    inverted_dict = get_sector_by_symbol(key_features_object)
 
-        # You need to load y_dev/y_test + dates_dev/dates_test from your dataset split function
-        X, y, dates = split_train_val_test(
-            file_path=stock_hist_path,
-            feature_cols=feature_dict[stock_name],
-            target_col="signal_voladj_10d"
-        )
-        # Split data time serries correct way
-        X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
+    for sector, ticker_list in ticker_object.items():
+        for stock_name in ticker_list:
+            stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
+            prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
 
-        model_pred_paths = {
-            "XGBoost_V1": {
-                "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
-                "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
-            },
-            "LGBM_V1": {
-                "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
-                "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
-            },
-            # "QKernelSVC_depth2": {
-            #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
-            #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
-            # }
-        }
+            # You need to load y_dev/y_test + dates_dev/dates_test from your dataset split function
+            X, y, dates = split_train_val_test(
+                file_path=stock_hist_path,
+                feature_cols=key_features_object[inverted_dict[stock_name]][stock_name],
+                target_col="signal_voladj_10d"
+            )
+            # Split data time serries correct way
+            X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
 
-        out_dir = f"data/results/model_comparisons/{stock_name}/"
-        evaluate_models_for_stock(
-            stock_name=stock_name,
-            prices=prices,
-            dev_dates=dates_dev,
-            test_dates=dates_test,
-            y_dev=y_dev,
-            y_test=y_test,
-            model_pred_paths=model_pred_paths,
-            out_dir=out_dir,
-            horizon_days=10,
-        )
+            model_pred_paths = {
+                "XGBoost_V1": {
+                    "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
+                    "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
+                },
+                "LGBM_V1": {
+                    "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
+                    "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
+                },
+                # "QKernelSVC_depth2": {
+                #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
+                #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
+                # }
+            }
+
+            out_dir = f"data/results/model_comparisons/{stock_name}/"
+            evaluate_models_for_stock(
+                stock_name=stock_name,
+                prices=prices,
+                dev_dates=dates_dev,
+                test_dates=dates_test,
+                y_dev=y_dev,
+                y_test=y_test,
+                model_pred_paths=model_pred_paths,
+                out_dir=out_dir,
+                horizon_days=10,
+            )
 
 
 
@@ -517,16 +571,17 @@ def main():
                 * QML models
             - Perform backtest
     '''
-    ticker_list = [
-        "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-        "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    ]
+    # ticker_list = [
+    #     "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
+    #     "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
+    # ]
 
+    portfolio_symbols = load_JSON_object('data/json/tracked_stocks.json')
     architecture_list = ['ensemble']  # quantum
-    
+
     # NOTE - For running the entire pipelien in plan above 
     # run_full_pipeline(
-    #     ticker_list, 
+    #     portfolio_symbols, 
     #     download_path='data/csv/historical/training/raw/',
     #     architectrure_list=architecture_list
     # )
@@ -546,7 +601,7 @@ def main():
     # print("NaNs contiguous?", np.all(np.diff(nan_positions) == 1))
     # a-b
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
-    run_backtests_with_comparison(ticker_list, feat_dict_path='data/json/stock_key_features.json')
+    run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json')
 
 
 if __name__ == "__main__":

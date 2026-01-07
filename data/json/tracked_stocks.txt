@@ -1,0 +1,68 @@
+{    
+    # CRYPTOCURRENCIES
+    "crypto": [
+        "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD",
+        "ADA-USD", "DOGE-USD", "TRX-USD", "AVAX-USD", "DOT-USD",
+        "MATIC-USD", "LTC-USD", "LINK-USD", "ATOM-USD", "XLM-USD",
+        "UNI-USD", "ETC-USD", "ICP-USD", "FIL-USD", "APT-USD",
+        "NEAR-USD", "ARB-USD", "OP-USD", "ALGO-USD", "EOS-USD",
+        "USDT-USD", "USDC-USD", "DAI-USD"
+    ],
+
+    # METALS, ENERGY & COMMODITIES
+    "minerals": [
+        # Precious metals
+        "GC=F",    # Gold
+        "SI=F",    # Silver
+        "PL=F",    # Platinum
+        "PA=F",    # Palladium
+
+        # Energy
+        "CL=F",    # Crude Oil - WTI
+        "BZ=F",    # Brent Oil
+        "NG=F",    # Natural Gas
+
+        # Industrial metals
+        "HG=F",    # Copper
+        "ALI=F",   # Aluminum
+        "ZN=F",    # Zinc
+
+        # Mining & energy companies
+        "XOM", "CVX", "BP", "SHEL", "COP", "RIO", "BHP", "FCX", "NEM", "GOLD"
+    ],
+    
+    # TECHNOLOGY - MEGA + GROWTH
+    "tech": [
+        # Mega-cap
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+        # Semiconductors
+        "AMD", "INTC", "TSM", "ASML", "AVGO", "QCOM", "MU",
+        # Software / Cloud
+        "ORCL", "CRM", "ADBE", "NOW", "SNOW", "DDOG", "MDB",
+        # Consumer tech
+        "NFLX", "PYPL", "SHOP", "XYZ", "UBER", "ABNB"
+    ],
+    
+    # FINANCIALS
+    "financials": ["JPM", "BAC", "GS", "MS", "WFC", "C", "V", "MA", "AXP", "PYPL", "BLK", "SCHW", "SPGI", "ICE"],
+    
+    # HEALTHCARE & BIOTECH
+    "healthcare": ["JNJ", "PFE", "MRK", "LLY", "ABBV", "UNH", "CVS", "MDT", "BMY", "AMGN", "GILD", "REGN", "VRTX"],
+
+    # CONSUMER - DEFENSIVE + CYCLICAL
+    "consumer": [
+        # Defensive
+        "PG", "KO", "PEP", "WMT", "COST", "MCD",
+        # Cyclical
+        "NKE", "DIS", "SBUX", "HD", "LOW", "TGT"
+    ],
+
+    # INDUSTRIALS & TRANSPORT
+    "industrials": ["BA", "CAT", "DE", "GE", "HON", "UPS", "FDX", "LMT", "RTX", "NOC"],
+    
+    # REAL ESTATE
+    "real_estate": ["AMT", "PLD", "EQIX", "SPG", "O", "VTR", "DLR", "PSA"],
+    
+    # ETFs - MACRO / BENCHMARKS
+    "etfs": ["SPY", "QQQ", "DIA", "IWM", "XLK", "XLE", "XLF", "XLV",  "GLD", "SLV", "USO", "ARKK"]
+}
