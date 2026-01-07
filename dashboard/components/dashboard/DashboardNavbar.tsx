@@ -7,8 +7,10 @@ export function DashboardNavbar() {
 
   const links = useMemo(
     () => [
-        { href: "#run", label: "Run analysis" },
         { href: "#portfolio", label: "Portfolio" },
+        { href: "#stockselector", label: "Stock Selection" },
+        { href: "#stockhistory", label: "Stock History" },
+        { href: "#run", label: "Run analysis" },
         { href: "#trades", label: "Trades" },
         { href: "#models", label: "Model comparison" },
     ],

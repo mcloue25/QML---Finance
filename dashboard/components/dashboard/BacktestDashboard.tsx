@@ -6,6 +6,7 @@ import RunAnalysisTab from "./RunAnalysisTab";
 import PortfolioTab from "./PortfolioTab";
 import TradesTab from "./TradesTab";
 import ModelCompareTab from "./ModelCompareTab";
+import StockHistoryTicker from "./StockHistoryTicker";
 
 import type { Catalog, RunPayload, BaselinePayload, SeriesRow, HeaderVM } from "./types";
 import { DashboardNavbar } from "./DashboardNavbar";
@@ -333,6 +334,10 @@ export default function BacktestDashboard() {
             setPosView={setPosView}
             isLoading={runStatus === "loading"}
           />
+        </section>
+
+        <section>
+          <StockHistoryTicker asset={asset} />
         </section>
 
         {/* Trades */}
