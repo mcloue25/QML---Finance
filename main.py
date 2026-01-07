@@ -335,6 +335,93 @@ def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, 
 
 
 
+def get_sector_by_symbol(key_features_object):
+    ''' Inverts the architecture of a dict of depth 2
+    Args:
+        key_features_object (Dict) : Dict where K == Sector && V == Dict where K == Ticker symbol && V == List of core features
+    Returns:
+        inverted (Dict) : 1D dict where K == ticker symbols && V == Sector they belong to
+    '''
+    inverted = {}
+    for sector, symbol_feats_dict in key_features_object.items():
+        inverted = {**inverted, **{symbol : sector for symbol, _ in symbol_feats_dict.items()}}
+    return inverted
+
+
+
+def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
+    ''' Function to replace current run_bakctests() where it will run backtests for all different model architectures & then compare their results and assess their validity
+    Args:
+        ticker_list (List) : List of ticker symbols
+        feat_dict_path (String) : String to JSON obejct where K==ticker symbol && V== list of core features generated for that symbol
+    '''
+    # Need to invert key features dict so we know what sector each symbol belongs to
+    key_features_object = load_JSON_object(feat_dict_path)
+    inverted_dict = get_sector_by_symbol(key_features_object)
+
+    for sector, ticker_list in ticker_object.items():
+        for stock_name in ticker_list:
+            
+            # NOTE - Run ensemble backtests
+            run_backtests(stock_name)
+
+            # Load historical 
+            stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
+            prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
+
+            # Load y_dev/y_test & dates_dev/dates_test from dataset split function
+            X, y, dates = split_train_val_test(
+                file_path=stock_hist_path,
+                feature_cols=key_features_object[inverted_dict[stock_name]][stock_name],
+                target_col="signal_voladj_10d"
+            )
+            # Split data time serries correct way
+            X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
+
+            model_pred_paths = {
+                "XGBoost_V1": {
+                    "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
+                    "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
+                },
+                "LGBM_V1": {
+                    "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
+                    "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
+                },
+                # "QKernelSVC_depth2": {
+                #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
+                #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
+                # }
+            }
+
+            # NOTE - Evaluate different model results 
+            out_dir = f"data/results/model_comparisons/{stock_name}/"
+            evaluate_models_for_stock(
+                stock_name=stock_name,
+                prices=prices,
+                dev_dates=dates_dev,
+                test_dates=dates_test,
+                y_dev=y_dev,
+                y_test=y_test,
+                model_pred_paths=model_pred_paths,
+                out_dir=out_dir,
+                horizon_days=10,
+            )
+
+
+
+
+def run_backtests(stock_name:list):
+    ''' Function to run backtests for a given stock and then analyse model performance against counterparts
+    '''
+    for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
+        backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
+                                    model_type=ensemble_type,
+                                    stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+                                    stock_name=stock_name,
+                                    backtest_output_path='data/results/backtests/')
+            
+
+
 def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str, stock_name:str, backtest_output_path:str, horizon_days:int=10):
     ''' Run OOF backtest on trained model to evaluate performance 
     Args:
@@ -392,106 +479,6 @@ def backtest_model_performance(parquet_path, model_type:str, stock_hist_path:str
 
 
 
-def run_backtests(ticker_list:list):
-    ''' Function to run all backtests for trained ensemble models
-    '''
-    for stock_name in ticker_list:
-        for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
-            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
-                                        model_type=ensemble_type,
-                                        stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
-                                        stock_name=stock_name,
-                                        backtest_output_path="data/results/backtests/")
-            
-
-    # Compare backtest results for all trained models for a given stock
-
-
-
-
-
-def run_backtests(ticker_list:list):
-    ''' Function to run backtests for a given stock and then analyse model performance against counterparts
-    '''
-    for stock_name in ticker_list:
-        for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
-            backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
-                                        model_type=ensemble_type,
-                                        stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
-                                        stock_name=stock_name,
-                                        backtest_output_path='data/results/backtests/')
-
-
-
-
-def get_sector_by_symbol(key_features_object):
-    ''' Inverts the architecture of a dict of depth 2
-    Args:
-        key_features_object (Dict) : Dict where K == Sector && V == Dict where K == Ticker symbol && V == List of core features
-    Returns:
-        inverted (Dict) : 1D dict where K == ticker symbols && V == Sector they belong to
-    '''
-    inverted = {}
-    for sector, symbol_feats_dict in key_features_object.items():
-        inverted = {**inverted, **{symbol : sector for symbol, _ in symbol_feats_dict.items()}}
-    return inverted
-
-
-
-def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
-    ''' Function to replace current run_bakctests() where it will run backtests for all different model architectures & then compare their results and assess their validity
-    Args:
-        ticker_list (List) : List of ticker symbols
-        feat_dict_path (String) : String to JSON obejct where K==ticker symbol && V== list of core features generated for that symbol
-    '''
-    # Need to invert key features dict so we know what sector each symbol belongs to
-    key_features_object = load_JSON_object(feat_dict_path)
-    inverted_dict = get_sector_by_symbol(key_features_object)
-
-    for sector, ticker_list in ticker_object.items():
-        for stock_name in ticker_list:
-            stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
-            prices = pd.read_csv(stock_hist_path, parse_dates=["date"]).set_index("date")["close"]
-
-            # You need to load y_dev/y_test + dates_dev/dates_test from your dataset split function
-            X, y, dates = split_train_val_test(
-                file_path=stock_hist_path,
-                feature_cols=key_features_object[inverted_dict[stock_name]][stock_name],
-                target_col="signal_voladj_10d"
-            )
-            # Split data time serries correct way
-            X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
-
-            model_pred_paths = {
-                "XGBoost_V1": {
-                    "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
-                    "test": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1_test.parquet",
-                },
-                "LGBM_V1": {
-                    "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
-                    "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
-                },
-                # "QKernelSVC_depth2": {
-                #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
-                #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
-                # }
-            }
-
-            out_dir = f"data/results/model_comparisons/{stock_name}/"
-            evaluate_models_for_stock(
-                stock_name=stock_name,
-                prices=prices,
-                dev_dates=dates_dev,
-                test_dates=dates_test,
-                y_dev=y_dev,
-                y_test=y_test,
-                model_pred_paths=model_pred_paths,
-                out_dir=out_dir,
-                horizon_days=10,
-            )
-
-
-
 def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: np.ndarray, test_dates: np.ndarray, y_dev: np.ndarray, y_test: np.ndarray, model_pred_paths: Dict[str, Dict[str, str]], out_dir: str, horizon_days: int = 10):
     ''' model_pred_paths:
         {
@@ -499,8 +486,10 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
             "LGBM_V1":    {"dev": "...parquet", "test": "...parquet"},
             "QKernel...": {"dev": "...parquet", "test": "...parquet"},
         }
-        Each parquet should contain columns: p_class_0,p_class_1,p_class_2 (and optionally y_pred)
-        and be indexed by date or have a date column.
+        Each parquet should contain columns: p_class_0,p_class_1,p_class_2 (and optionally y_pred) and be indexed by date or have a date column.
+    Args:
+        stock_name (String) :
+        prices
     '''
     # Initialise evaluator
     evaluator = StockModelEvaluator(
@@ -516,13 +505,14 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
         preds_dev = pd.read_parquet(paths["dev"])
         preds_test = pd.read_parquet(paths["test"])
 
-        # Ensure date index if parquet stored date column
-        if "date" in preds_dev.columns:
-            preds_dev["date"] = pd.to_datetime(preds_dev["date"])
-            preds_dev = preds_dev.set_index("date").sort_index()
-        if "date" in preds_test.columns:
-            preds_test["date"] = pd.to_datetime(preds_test["date"])
-            preds_test = preds_test.set_index("date").sort_index()
+        # NOTE - Need to add "date" col back inot data
+        # Dealing with dat col
+        # if "date" in preds_dev.columns:
+        #     preds_dev["date"] = pd.to_datetime(preds_dev["date"])
+        #     preds_dev = preds_dev.set_index("date").sort_index()
+        # if "date" in preds_test.columns:
+        #     preds_test["date"] = pd.to_datetime(preds_test["date"])
+        #     preds_test = preds_test.set_index("date").sort_index()
 
         evaluator.register_model(
             model_tag,
