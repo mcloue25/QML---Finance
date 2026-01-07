@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import RunAnalysisTab from "./RunAnalysisTab";
 import PortfolioTab from "./PortfolioTab";
 import TradesTab from "./TradesTab";
+import FiltersCard from "./FiltersCard";
 import ModelCompareTab from "./ModelCompareTab";
 import StockHistoryTicker from "./StockHistoryTicker";
 
@@ -296,6 +297,33 @@ export default function BacktestDashboard() {
           <PortfolioTab />
         </section>
 
+        {/* FilterCard */}
+        <section id="stockselection" className="scroll-mt-24 space-y-4">
+            <SectionHeader title="Experiment Selection" />
+            <FiltersCard
+              assets={assets}
+              catalog={catalog}
+              asset={asset}
+              setAsset={setAsset}
+              modelType={modelType}
+              setModelType={setModelType}
+              horizon={horizon}
+              setHorizon={setHorizon}
+              query={query}
+              setQuery={setQuery}
+              runId={runId}
+              setRunId={setRunId}
+              runIds={runIds}
+              header={header}
+            />
+          </section>
+
+
+        <section id="stockhistory" className="scroll-mt-24 space-y-4">
+          <SectionHeader title="History" />
+          <StockHistoryTicker asset={asset} />
+        </section>
+
         {/* Run analysis */}
         <section id="run" className="scroll-mt-24 space-y-4">
           <SectionHeader title="Run Analysis" />
@@ -334,10 +362,6 @@ export default function BacktestDashboard() {
             setPosView={setPosView}
             isLoading={runStatus === "loading"}
           />
-        </section>
-
-        <section>
-          <StockHistoryTicker asset={asset} />
         </section>
 
         {/* Trades */}

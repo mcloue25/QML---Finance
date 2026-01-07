@@ -151,7 +151,7 @@ export default function PortfolioTab() {
         <CardContent className="pt-6">
           <div className="text-sm font-medium">Portfolio allocation (dummy)</div>
           <div className="mt-1 text-xs text-muted-foreground">
-            This tab uses placeholder holdings, ToDo replace this with holdings from file once I have executor setup.
+            This tab uses placeholder holdings, ToDo replace this with holdings from file once I have ExecutorClass setup.
           </div>
 
           {/* Treemap */}

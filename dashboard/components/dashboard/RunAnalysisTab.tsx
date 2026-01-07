@@ -86,24 +86,7 @@ export default function RunAnalysisTab(props: {
   } = props;
 
   return (
-    <div className="space-y-4">
-      <FiltersCard
-        assets={assets}
-        catalog={catalog}
-        asset={asset}
-        setAsset={setAsset}
-        modelType={modelType}
-        setModelType={setModelType}
-        horizon={horizon}
-        setHorizon={setHorizon}
-        query={query}
-        setQuery={setQuery}
-        runId={runId}
-        setRunId={setRunId}
-        runIds={runIds}
-        header={header}
-      />
-
+    <div>
       <div className={isLoading ? "opacity-60" : ""}>
         <KpiRow header={header} />
       </div>
