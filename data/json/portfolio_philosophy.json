@@ -1,0 +1,91 @@
+{
+  "BALANCED_V1": {
+    "test_sharpe_per_turnover": ["max", 3.0],
+    "test_return_per_turnover": ["max", 2.0],
+    "test_sharpe": ["max", 1.5],
+    "test_annual_return": ["max", 1.0],
+
+    "test_max_dd": ["max", 1.0],
+    "test_annual_vol": ["min", 0.75],
+    "test_avg_turnover_y": ["min", 0.75],
+
+    "test_log_loss": ["min", 1.25],
+    "test_brier": ["min", 0.75],
+    "test_ece": ["min", 0.75]
+  },
+
+  "DEFENSIVE_V1": {
+    "test_sharpe_per_turnover": ["max", 2.0],
+    "test_return_per_turnover": ["max", 1.0],
+    "test_sharpe": ["max", 1.5],
+    "test_annual_return": ["max", 0.75],
+
+    "test_max_dd": ["max", 2.0],
+    "test_annual_vol": ["min", 1.5],
+    "test_avg_turnover_y": ["min", 1.25],
+
+    "test_log_loss": ["min", 1.5],
+    "test_brier": ["min", 1.0],
+    "test_ece": ["min", 1.25]
+  },
+
+  "AGGRESSIVE_V1": {
+    "test_sharpe_per_turnover": ["max", 3.5],
+    "test_return_per_turnover": ["max", 3.0],
+    "test_sharpe": ["max", 1.0],
+    "test_annual_return": ["max", 2.0],
+
+    "test_max_dd": ["max", 0.5],
+    "test_annual_vol": ["min", 0.5],
+    "test_avg_turnover_y": ["min", 0.5],
+
+    "test_log_loss": ["min", 0.75],
+    "test_brier": ["min", 0.5],
+    "test_ece": ["min", 0.5]
+  },
+
+  "PROBABILITY_TRUST_V1": {
+    "test_sharpe_per_turnover": ["max", 2.0],
+    "test_return_per_turnover": ["max", 1.5],
+    "test_sharpe": ["max", 1.0],
+    "test_annual_return": ["max", 0.75],
+
+    "test_max_dd": ["max", 0.75],
+    "test_annual_vol": ["min", 0.75],
+    "test_avg_turnover_y": ["min", 0.75],
+
+    "test_log_loss": ["min", 2.0],
+    "test_brier": ["min", 1.5],
+    "test_ece": ["min", 2.0]
+  },
+
+  "LOW_TURNOVER_V1": {
+    "test_sharpe_per_turnover": ["max", 3.0],
+    "test_return_per_turnover": ["max", 2.0],
+    "test_sharpe": ["max", 1.0],
+    "test_annual_return": ["max", 0.75],
+
+    "test_max_dd": ["max", 1.0],
+    "test_annual_vol": ["min", 1.0],
+    "test_avg_turnover_y": ["min", 2.0],
+
+    "test_log_loss": ["min", 1.0],
+    "test_brier": ["min", 0.75],
+    "test_ece": ["min", 0.75]
+  },
+
+  "CRYPTO_VOL_AWARE_V1": {
+    "test_sharpe_per_turnover": ["max", 2.5],
+    "test_return_per_turnover": ["max", 1.5],
+    "test_sharpe": ["max", 1.0],
+    "test_annual_return": ["max", 1.25],
+
+    "test_max_dd": ["max", 2.0],
+    "test_annual_vol": ["min", 2.0],
+    "test_avg_turnover_y": ["min", 1.0],
+
+    "test_log_loss": ["min", 1.25],
+    "test_brier": ["min", 1.0],
+    "test_ece": ["min", 1.25]
+  }
+}

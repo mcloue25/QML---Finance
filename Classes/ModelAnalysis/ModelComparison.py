@@ -9,6 +9,38 @@ from sklearn.metrics import log_loss
 from sklearn.calibration import calibration_curve
 
 
+METRIC_SPECS = { 
+    # Trading efficiency (PRIMARY)
+    # Risk-adjusted return per unit of trading – your best single summary metric
+    "test_sharpe_per_turnover": ("max", 3.0),
+    # Raw efficiency of trading activity
+    "test_return_per_turnover": ("max", 2.0),
+    # Classic risk-adjusted performance
+    "test_sharpe": ("max", 1.5),
+    # Absolute performance (kept lower weight to avoid leverage bias)
+    "test_annual_return": ("max", 1.0),
+
+    # Risk & cost controls
+    # Less negative drawdown is better
+    "test_max_dd": ("max", 1.0),
+    # Lower volatility = more robust
+    "test_annual_vol": ("min", 0.75),
+    # Lower trading intensity = more cost-robust
+    "test_avg_turnover_y": ("min", 0.75),
+
+    
+    # Probability quality ("trust")
+    # Overall probabilistic accuracy
+    "test_log_loss": ("min", 1.25),
+    # Calibration-aware accuracy
+    "test_brier": ("min", 0.75),
+    # Knowing when you're right (critical for probability-weighted policies)
+    "test_ece": ("min", 0.75),
+}
+
+
+
+
 # Probability quality utilities
 def brier_score_multiclass(y_true: np.ndarray, proba: np.ndarray, n_classes: int = 3):
     ''' Multiclass Brier score (lower is better).
@@ -393,6 +425,102 @@ class StockModelEvaluator:
 
         return summary_df, details
     
+
+
+    def compare_model_results(self, summary_df):
+        ''' Compare model performance in summary_df & return best performing model
+        Args:
+            summary_df (DataFrame) : DF with model results
+        '''
+        # Get better performing model based on each column
+        metric_results = self.get_metric_results_dict(summary_df)
+        
+        # Normalise each metric into score_<metric>
+        score_cols = []
+        weights = {}
+        for col, (direction, weight) in METRIC_SPECS.items():
+            score_col = f"score_{col}"
+            summary_df[score_col] = self.normalise_series(summary_df[col], direction=direction)
+            score_cols.append(score_col)
+            weights[score_col] = weight
+
+        # Compute weighted composite score
+        weights_s = pd.Series(weights)
+        weighted_scores = summary_df[score_cols].mul(weights_s, axis=1)
+        denom = summary_df[score_cols].notna().mul(weights_s, axis=1).sum(axis=1)
+        summary_df["composite_score"] = weighted_scores.sum(axis=1) / denom
+
+        # Rank models return best
+        summary_df["rank"] = summary_df["composite_score"].rank(ascending=False, method="dense")
+        best_row = summary_df.loc[summary_df["composite_score"].idxmax()]
+        best_model = best_row["model_tag"]
+        return {
+            "best_model": best_model,
+            "ranked_df": summary_df.sort_values("rank").to_dict(),
+            "metric_winners": metric_results,
+        }
+
+
+    def get_metric_results_dict(self, summary_df:pd.DataFrame):
+        ''' Create dict where K == feature col && V == Better performing model
+        '''
+        metric_results = {}
+        model_tags = list(summary_df['model_tag'])
+        for col in summary_df.columns:
+            if col in METRIC_SPECS:
+                direction = METRIC_SPECS[col][0]
+                if direction == 'max':
+                    better_row = summary_df[col].idxmax()
+                    metric_results[col] = model_tags[better_row]
+                else:
+                    better_row = summary_df[col].idxmin()
+                    metric_results[col] = model_tags[better_row]
+        
+        return metric_results
+    
+
+
+    def normalise_series(self, col: pd.Series, direction: str, winsor_p: float = 0.01):
+        ''' Normalise a metric column to [0, 1] so that higher = better.
+        Args:
+            s (pd.Series) : metric values across models (one stock)
+            direction (str) : "max" or "min"
+            winsor_p (float) : quantile for clipping outliers
+        Returns:
+            pd.Series: normalized scores in [0, 1]
+        '''
+        # Convert to numeric, coerce errors to NaN
+        col = pd.to_numeric(col, errors="coerce")
+        s = col.copy()  # keep original index/shape
+
+        # Use valid values to compute bounds
+        valid = s.dropna()
+        if valid.empty:
+            return pd.Series(np.nan, index=s.index)
+
+        # winsorization to limit influence of extreme value by clipping
+        if winsor_p is not None and winsor_p > 0:
+            lo = valid.quantile(winsor_p)
+            hi = valid.quantile(1 - winsor_p)
+            s = s.clip(lower=lo, upper=hi)
+            valid = s.dropna()
+
+        mn, mx = valid.min(), valid.max()
+
+        # If no variation, return neutral scores
+        if np.isclose(mx, mn):
+            return pd.Series(0.5, index=s.index)
+
+        # Normalisation & Return scaled winner
+        scaled = (s - mn) / (mx - mn)
+        if direction == "max":
+            return scaled
+        elif direction == "min":
+            return 1.0 - scaled
+        else:
+            raise ValueError(f"Unknown direction: {direction}")
+
+
 # NOTE - CONTEXT
 # Context / Interpretation Guide for Model Comparison Table
 #

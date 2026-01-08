@@ -7,7 +7,8 @@ from sklearn.model_selection import TimeSeriesSplit
 from typing import Dict, List, Optional, Tuple, Any, Iterable
 
 from utilities import *
-from Classes.BackTesting import BacktestConfig, BackTest
+
+# Classes for data fetching, feature generation & feature pruning / signal anlaysis
 from Classes.FeatureExtraction.DataGenerator import DataDownloader
 from Classes.FeatureExtraction.SignalAnalysis import SignalAnalyser
 from Classes.FeatureExtraction.FeatureAnalysis import FeatureAnalyser
@@ -16,14 +17,23 @@ from Classes.FeatureExtraction.FeatureEngineering import FeatureBuilder
 # Load model architectures for testing
 from Classes.ModelArchitectures.TreeEnsemble import *
 from Classes.ModelArchitectures.QuantumModels import *
-from Classes.ModelComparison import StressGrid, StockModelEvaluator
+
+# Classes for analysing & ranking a models performance
+from Classes.ModelAnalysis.BackTesting import BacktestConfig, BackTest
+from Classes.ModelAnalysis.ModelComparison import StressGrid, StockModelEvaluator
+
+from Classes.Trading.PortfolioManagement import PortfolioManager
 
 
 
 def download_data(ticker_list:list, period:str, output_path:str):
     ''' Function for downloading all of the ticker data I want to follow 
     Args:
+        ticker_list (List) : List of stock symbols to download
+        period (String) : Indicates the amount of time data we want to download
         output_path (String) : Path tot folder to save all CVS's to
+    Returns:
+        Downloads a CSV of historical data for each symbol in ticker_List and is saved in output_path
     '''
     # period == max by default gets all daya 
     # period = '1y' getrs the last year for testing
@@ -290,7 +300,7 @@ def ensemble_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test,
 def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), model_tag="QKernelSVC_V1"):
     ''' Function for training different kinds of quantum models
     Args:
-        stock_name (String) : 
+        stock_name (String) : String stock name
         X_dev (np.ndarray) :
         y_dev (np.ndarray) :
         dates_dev (np.ndarray) :
@@ -349,21 +359,27 @@ def get_sector_by_symbol(key_features_object):
 
 
 
-def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
+def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str, performance_dict_path:str):
     ''' Function to replace current run_bakctests() where it will run backtests for all different model architectures & then compare their results and assess their validity
     Args:
         ticker_list (List) : List of ticker symbols
         feat_dict_path (String) : String to JSON obejct where K==ticker symbol && V== list of core features generated for that symbol
+        performance_dict_path (String) : File path to location where we want to save model performance ranking data to
+    Returns:
+        Runs backtests for all available trained models for a given stock
+        Then ranks each models performance in relation to all other models trained for that stock
+        Saves all top performing models data to stock_specific_model_rankings.json
     '''
     # Need to invert key features dict so we know what sector each symbol belongs to
     key_features_object = load_JSON_object(feat_dict_path)
     inverted_dict = get_sector_by_symbol(key_features_object)
-
+    
+    performance_json = {}
     for sector, ticker_list in ticker_object.items():
         for stock_name in ticker_list:
-            
+
             # NOTE - Run ensemble backtests
-            run_backtests(stock_name)
+            run_stock_backtests(stock_name)
 
             # Load historical 
             stock_hist_path = f"data/csv/historical/training/cleaned/{stock_name}.csv"
@@ -395,7 +411,7 @@ def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
 
             # NOTE - Evaluate different model results 
             out_dir = f"data/results/model_comparisons/{stock_name}/"
-            evaluate_models_for_stock(
+            model_ranking_dict = evaluate_models_for_stock(
                 stock_name=stock_name,
                 prices=prices,
                 dev_dates=dates_dev,
@@ -406,12 +422,18 @@ def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str):
                 out_dir=out_dir,
                 horizon_days=10,
             )
+            # Store best performing model results for each stock so portfolioManager can use ranking later
+            performance_json[stock_name] = model_ranking_dict
+    save_JSON_object(performance_json, performance_dict_path)
 
 
 
-
-def run_backtests(stock_name:list):
+def run_stock_backtests(stock_name:list):
     ''' Function to run backtests for a given stock and then analyse model performance against counterparts
+    Args:
+        stock_name (String) : String stock name
+    Returns:
+        RUns multiple backtests using different model architectures
     '''
     for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
         backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
@@ -492,13 +514,7 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
         prices
     '''
     # Initialise evaluator
-    evaluator = StockModelEvaluator(
-        stock_name=stock_name,
-        prices=prices,
-        BackTestClass=BackTest,
-        BacktestConfigClass=BacktestConfig,
-        horizon_days=horizon_days,
-    )
+    evaluator = StockModelEvaluator(stock_name=stock_name, prices=prices, BackTestClass=BackTest, BacktestConfigClass=BacktestConfig, horizon_days=horizon_days)
 
     # Register each model (dev + test)
     for model_tag, paths in model_pred_paths.items():
@@ -514,23 +530,11 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
         #     preds_test["date"] = pd.to_datetime(preds_test["date"])
         #     preds_test = preds_test.set_index("date").sort_index()
 
-        evaluator.register_model(
-            model_tag,
-            preds_dev=preds_dev,
-            preds_test=preds_test,
-            y_dev=y_dev,
-            y_test=y_test,
-            dates_dev=dev_dates,
-            dates_test=test_dates,
-        )
+        # Register each model before I comapre them
+        evaluator.register_model(model_tag, preds_dev=preds_dev, preds_test=preds_test, y_dev=y_dev, y_test=y_test, dates_dev=dev_dates, dates_test=test_dates)
 
     # Run evaluation + robustness grid
-    summary_df, details = evaluator.evaluate_all_models(
-        stress=StressGrid(),
-        base_transaction_cost=0.0005,
-        base_execution_lag=1,
-        base_entry_threshold=0.20,
-    )
+    summary_df, details = evaluator.evaluate_all_models(stress=StressGrid(), base_transaction_cost=0.0005, base_execution_lag=1, base_entry_threshold=0.20)
 
     # Save outputs
     create_folder(out_dir)
@@ -543,9 +547,25 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
             stress_df = res["stress_test"]
             stress_df.to_parquet(os.path.join(out_dir, f"{stock_name}_{model_tag}_stress.parquet"), index=False)
 
-    print(summary_df)
-    return summary_df, details
+    # Rank model performance & return dict with best ranked model
+    model_ranking_dict = evaluator.compare_model_results(summary_df)
+    return model_ranking_dict
 
+
+
+
+
+def generate_diversified_portfolio(performance_dict_path:str, portfolio_sectors_path:str, philosophy_path:str, philosophy:str, initial_investment:int =100_000):
+    ''' Load the PortfolioManager Class and distribute initial capital across investments
+    Args:
+        performance_dict_path (String) :
+        initial_investment (Int) : 
+    '''
+    manager = PortfolioManager()
+    sector_data = manager.load_sector_data(portfolio_sectors_path)
+
+    # Taking the best performing model for each stock now rank their performances and choose the top N to diversify capital between
+    manager.analyse_best_performing_models(performance_dict_path, philosophy_path, philosophy)
 
 
 def main():
@@ -561,11 +581,7 @@ def main():
                 * QML models
             - Perform backtest
     '''
-    # ticker_list = [
-    #     "BTC-USD", "ETH-USD", "USDT-USD", "BNB-USD", "SOL-USD",
-    #     "XRP-USD", "USDC-USD", "ADA-USD", "DOGE-USD", "TRX-USD"
-    # ]
-
+    # NOTE - Load portfolio data 
     portfolio_symbols = load_JSON_object('data/json/tracked_stocks.json')
     architecture_list = ['ensemble']  # quantum
 
@@ -576,22 +592,17 @@ def main():
     #     architectrure_list=architecture_list
     # )
 
-    # NOTE - creates backtests for all ensemble models
-    # run_backtests(ticker_list)
-
-    # parquet_files sanity test 
-    # df = pd.read_parquet('data/results/trained_models/ensembles/BTC-USD/XGBoost_V1/XGBoost_V1.parquet')
-    # nan_mask = df[["p_class_0","p_class_1","p_class_2"]].isna().any(axis=1)
-    # print("NaN rows:", nan_mask.sum())
-    # print("First NaN date:", df.index[nan_mask][0] if nan_mask.any() else None)
-    # print("Last NaN date:", df.index[nan_mask][-1] if nan_mask.any() else None)
-    # print("----"*20)
-    # nan_mask = df[["p_class_0","p_class_1","p_class_2"]].isna().any(axis=1)
-    # nan_positions = np.where(nan_mask.values)[0]
-    # print("NaNs contiguous?", np.all(np.diff(nan_positions) == 1))
-    # a-b
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
-    run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json')
+    # run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json', performance_dict_path='data/json/stock_specific_model_rankings.json')
+
+
+    # NOTE - Using best performing model data use PortfolioManager to distribute initial capital into investments
+    generate_diversified_portfolio(
+        performance_dict_path='data/json/stock_specific_model_rankings.json',
+        portfolio_sectors_path = 'data/json/tracked_stocks.json',
+        philosophy_path = 'data/json/portfolio_philosophy.json',
+        philosophy = 'BALANCED_V1'
+    )
 
 
 if __name__ == "__main__":
