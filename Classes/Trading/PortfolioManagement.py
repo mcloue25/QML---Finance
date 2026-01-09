@@ -4,7 +4,8 @@ import json
 import numpy as np
 import pandas as pd
 
-import matplotlib.pyplot as plt
+from pathlib import Path
+from datetime import datetime, timezone
 
 from ..Plotting import Plotter
 
@@ -125,14 +126,14 @@ class PortfolioManager():
 
 
     
-    def get_sector_by_symbol(self, portfolio_sectors_path):
+    def get_sector_by_symbol(self, sector_data):
         ''' Inverts the architecture of a dict of depth 2
         Args:
             key_features_object (Dict) : Dict where K == Sector && V == Dict where K == Ticker symbol && V == List of core features
         Returns:
             inverted (Dict) : 1D dict where K == ticker symbols && V == Sector they belong to
         '''
-        return {symbol: sector for sector, symbols in portfolio_sectors_path.items() for symbol in symbols}
+        return {symbol: sector for sector, symbols in sector_data.items() for symbol in symbols}
     
 
     # generate_ranked_model_list
@@ -150,16 +151,17 @@ class PortfolioManager():
         # Generate ranking using portfolio philosophy
         self.ranked_df = self.generate_rankings(models_df)
         self.ranked_df.set_index('allocation_rank', inplace=True)
-        print(self.ranked_df)
         
         # Plotting allocation scores to see if theres any noticable dropoff
         if show:
+            print('Ranked Model DataFrame:')
+            print(self.ranked_df)
             plot = Plotter()
-            plot.line_plot(self.ranked_df)
-            plot.bar_plot(self.ranked_df)
-            plot.histogram_plot(self.ranked_df)
+            plot.line_plot(self.ranked_df, 'allocation_score')
+            plot.bar_plot(self.ranked_df, 'allocation_score')
+            plot.histogram_plot(self.ranked_df, 'allocation_score')
             a-b
-
+        return
 
 
     def aggregate_top_performing_models(self, perf_data):
@@ -258,7 +260,7 @@ class PortfolioManager():
 
 
 
-    def generate_diversified_portfolio(self, capital:float, tactic:str ='BASIC', conf_amp:float=5.0, convexity_belief:float =2.0, max_weight:float= 0.10, min_weight:float= 0.005, target_vol:float= 0.20):
+    def genereate_portfolio(self, capital:float, tactic:str ='BASIC', conf_amp:float=5.0, convexity_belief:float =2.0, max_weight:float= 0.10, min_weight:float= 0.005, target_vol:float= 0.20, show:bool=False):
         ''' Function for taking the ranked DF of stock models & generating a portfolio of stocks to invest ion based on their rankings
         Args:
             capital (Float) : Investment capital to disperse amongst stocks
@@ -311,4 +313,79 @@ class PortfolioManager():
         # Conversion of positions to euro
         df["weight"] = weights
         df["euro"] = weights * capital
+
+        if show:
+            print('Portfolio Distribution:')
+            print(df)
+            plot = Plotter()
+            plot.line_plot(df, 'euro')
+            plot.bar_plot(df, 'euro')
+            plot.histogram_plot(df, 'euro')
         return df
+    
+
+    def assess_portforlio_diversity(self, symbol_sector_dict:dict, position_df:pd.DataFrame, to_json:bool=True, show:bool=False):
+        ''' Takes a portfolio state and analyses its diversity between all holdings
+        Args:
+            sector_data (Dict) : Dict 
+            symbol_sector_dict (Dict) : Dict 
+            holdings_df (DataFrame) : DF containing all currently held positions
+            show (Bool) : Display distribution or not
+        '''
+        self.holdings_df = position_df.loc[position_df.euro > 0]
+        sector_data = [symbol_sector_dict[i] for i in self.holdings_df['stock']]
+        self.holdings_df['stock_sector'] = sector_data
+
+        if to_json:
+            # self.holdings_dist = {sector : [] for sector in set(self.holdings_df['stock_sector'])}
+            # for symbol in self.holdings_df['stock']:
+            #     self.holdings_dist[symbol_sector_dict[symbol]].append(symbol)
+            # pretty_print_json(self.holdings_dist)
+
+            weights_dict = {}
+            holdings_dict = {}
+            investment_dict = {}
+            weight_exposure_dict = {}
+            invest_exposure_dict = {}
+            held_sectors = set(self.holdings_df['stock_sector'])
+            for sector in held_sectors:
+                # Extract distribution of holdings within each sector
+                sector_df = self.holdings_df.loc[self.holdings_df['stock_sector'] == sector]
+                weights_dict[sector] = list(sector_df['weight'])
+                holdings_dict[sector] = list(sector_df['stock'])
+                investment_dict[sector] = list(sector_df['euro'])
+                # Calculate total weight & investment in each sector
+                weight_exposure_dict[sector] = float(sector_df['weight'].sum())
+                invest_exposure_dict[sector] = float(sector_df['euro'].sum())
+            
+            # Store snapshot of portfolio state & save to backend
+            snapshot = {
+                'ts' : datetime.now(timezone.utc).isoformat(),
+                'portfolio_id' : "main",
+                'distribution' : holdings_dict,
+                'holdings_weight' : weights_dict,
+                'holdings_euro' : investment_dict,
+                'sector_exposure_euro' : invest_exposure_dict,
+                'sector_exposure_weight' : weight_exposure_dict
+            }
+            self.append_jsonl(output_path="data/json/portfolio/holdings_diversity.jsonl", record=snapshot)
+
+        if show:
+            plot = Plotter()
+            plot.histogram_plot(self.holdings_df, 'stock_sector')
+
+
+    
+    def append_jsonl(self, output_path: str | Path, record: dict):
+        ''' Append a single JSON record to a .jsonl file. Creates the file (and parent dirs) if it does not exist
+        Args:
+            path: Path to .jsonl file
+            record: JSON-serialisable dict
+        '''  
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with output_path.open("a", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=False)
+            f.write("\n")
+        

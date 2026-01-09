@@ -553,8 +553,6 @@ def evaluate_models_for_stock(stock_name: str, prices: pd.Series, *, dev_dates: 
 
 
 
-
-
 def generate_diversified_portfolio(performance_dict_path:str, portfolio_sectors_path:str, philosophy_path:str, philosophy:str, initial_investment:int =100_000):
     ''' Load the PortfolioManager Class and distribute initial capital across investments
     Args:
@@ -562,14 +560,21 @@ def generate_diversified_portfolio(performance_dict_path:str, portfolio_sectors_
         initial_investment (Int) : 
     '''
     manager = PortfolioManager()
+    # Load all sector and symbol data 
     sector_data = manager.load_sector_data(portfolio_sectors_path)
+    symbol_sector_dict = manager.get_sector_by_symbol(sector_data)
 
     # Taking the best performing model for each stock now rank their performances and choose the top N to diversify capital between
     manager.analyse_best_performing_models(performance_dict_path, philosophy_path, philosophy)
 
-
     # Disperse capital amongst ranked stocks based on distribution mindset
-    manager.genereate_diversified_portfolio(initial_investment, tactic='DEFAULT')
+    position_df = manager.genereate_portfolio(initial_investment, tactic='SOFTMAX', show=False)
+
+    # Show distribution of holdings between sectors
+    manager.assess_portforlio_diversity(symbol_sector_dict, position_df, show=True)
+    # subset_df = position_df[['stock', 'model_tag', 'weight', 'allocation_score', 'euro']]
+    # subset_df.to_csv('data/csv/test/position_df.csv')
+
 
 
 def main():
