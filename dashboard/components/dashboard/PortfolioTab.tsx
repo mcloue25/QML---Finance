@@ -283,14 +283,6 @@ export default function PortfolioTab() {
       <Card className="md:col-span-12 rounded-2xl shadow-sm">
         <CardContent className="pt-6">
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium">Portfolio treemap</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                Area = Euro exposure • Hover a cell to see euro + weight
-                {data?.ts ? ` • ${data.ts}` : ""}
-              </div>
-            </div>
-
             <div className="text-xs text-muted-foreground">
               {status === "loading" ? "Loading…" : status === "error" ? "Error" : null}
             </div>
@@ -334,7 +326,7 @@ export default function PortfolioTab() {
       {/* LEFT: TABLE */}
       <Card className="md:col-span-6 rounded-2xl shadow-sm">
         <CardContent className="pt-6">
-          <div className="text-sm font-medium">Sector exposure</div>
+          <div className="text-sm font-medium">Sector Exposure</div>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-muted-foreground">
@@ -376,8 +368,8 @@ export default function PortfolioTab() {
       {/* RIGHT: PIE */}
       <Card className="md:col-span-6 rounded-2xl shadow-sm">
         <CardContent className="pt-6">
-          <div className="text-sm font-medium">Sector weights</div>
-          <div className="mt-1 text-xs text-muted-foreground">Pie shows weight allocation by sector</div>
+          <div className="text-sm font-medium">Holdings Distribution</div>
+          {/* <div className="mt-1 text-xs text-muted-foreground">Pie shows weight allocation by sector</div> */}
 
           {!pieData.length ? (
             <div className="mt-4 rounded-2xl border border-border bg-card/60 p-6 text-sm text-muted-foreground">
@@ -398,7 +390,7 @@ export default function PortfolioTab() {
                     cx="50%"
                     cy="50%"
                     outerRadius="95%"
-                    innerRadius="40%"
+                    innerRadius="20%"
                     isAnimationActive={false}
                   >
                     {pieData.map((entry) => (
