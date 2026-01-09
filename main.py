@@ -568,6 +568,10 @@ def generate_diversified_portfolio(performance_dict_path:str, portfolio_sectors_
     manager.analyse_best_performing_models(performance_dict_path, philosophy_path, philosophy)
 
 
+    # Disperse capital amongst ranked stocks based on distribution mindset
+    manager.genereate_diversified_portfolio(initial_investment, tactic='DEFAULT')
+
+
 def main():
     '''  Main function for building models:
         Plan:

@@ -15,6 +15,10 @@ from sklearn.calibration import CalibratedClassifierCV
 
 n_qubits = 3
 dev = qml.device("lightning.qubit", wires=n_qubits)
+'''
+Need to dual boot with linux and insta;; ;ightening-gpu:
+    * pip install pennylane-lightning-gpu
+'''
 
 def feature_map(x, depth=2):
     ''' Quantum feature map that embeds the classical feature vector into a quantum state.

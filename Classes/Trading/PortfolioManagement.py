@@ -4,6 +4,10 @@ import json
 import numpy as np
 import pandas as pd
 
+import matplotlib.pyplot as plt
+
+from ..Plotting import Plotter
+
 # from ...utilities import load_JSON_object, pretty_print_json
 
 
@@ -131,8 +135,8 @@ class PortfolioManager():
         return {symbol: sector for sector, symbols in portfolio_sectors_path.items() for symbol in symbols}
     
 
-
-    def analyse_best_performing_models(self, performance_json_path, philosophy_path:str, philosophy:str='BALANCED_V1'):
+    # generate_ranked_model_list
+    def analyse_best_performing_models(self, performance_json_path, philosophy_path:str, philosophy:str='BALANCED_V1', show=False):
         ''' Function to analyse perfromance metrics 
         '''
         # Load model performance data and trading philosophy for deciding how we want to rank stocks
@@ -147,9 +151,15 @@ class PortfolioManager():
         self.ranked_df = self.generate_rankings(models_df)
         self.ranked_df.set_index('allocation_rank', inplace=True)
         print(self.ranked_df)
-        a-b
-
         
+        # Plotting allocation scores to see if theres any noticable dropoff
+        if show:
+            plot = Plotter()
+            plot.line_plot(self.ranked_df)
+            plot.bar_plot(self.ranked_df)
+            plot.histogram_plot(self.ranked_df)
+            a-b
+
 
 
     def aggregate_top_performing_models(self, perf_data):
@@ -244,3 +254,61 @@ class PortfolioManager():
             return 1.0 - scaled
         else:
             raise ValueError(f"Unknown direction: {direction}")
+        
+
+
+
+    def generate_diversified_portfolio(self, capital:float, tactic:str ='BASIC', conf_amp:float=5.0, convexity_belief:float =2.0, max_weight:float= 0.10, min_weight:float= 0.005, target_vol:float= 0.20):
+        ''' Function for taking the ranked DF of stock models & generating a portfolio of stocks to invest ion based on their rankings
+        Args:
+            capital (Float) : Investment capital to disperse amongst stocks
+            tactic (String) : Portfolio generation tactic
+            conf_amp (Float) : How aggressively I want to favor the top ranked models
+            convexity_belief (Float) : How much do I believe the top ranked ideas are disproportionately better
+            max_weight (Float) : MAx position size for a single holding
+            min_weight (Float) : Min position cutoff
+            target_vol (Float) : For scaling down volatile assets
+        Returns:
+            df (DataFrame) : DF with position sizes based on passed tactic and thresholds
+        '''
+        df = self.ranked_df.sort_values("allocation_score", ascending=False)
+        df = df[df["allocation_score"] > 0].copy()
+        scores = df["allocation_score"].values
+
+        match tactic:
+            case "BASIC":
+                weights = scores / scores.sum()
+
+            case "SOFTMAX":
+                # numerical stability
+                scores = scores - scores.max()
+                weights = np.exp(conf_amp * scores)
+                weights = weights / weights.sum()
+
+            case "POWER_LAW":
+                weights = scores ** convexity_belief
+                weights = weights / weights.sum()
+
+            case _:
+                raise ValueError(f"Unknown tactic: {tactic}")
+
+
+        # Volatility targeting
+        vol = df["test_annual_vol"].values
+        risk_adj = np.minimum(target_vol / vol, 1.0)
+        weights = weights * risk_adj
+        weights = weights / weights.sum()
+
+        # Max position cap
+        weights = np.minimum(weights, max_weight)
+        weights = weights / weights.sum()
+
+        # Min position cutoff
+        mask = weights >= min_weight
+        weights = weights * mask
+        weights = weights / weights.sum()
+
+        # Conversion of positions to euro
+        df["weight"] = weights
+        df["euro"] = weights * capital
+        return df

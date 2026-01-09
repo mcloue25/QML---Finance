@@ -26,9 +26,8 @@ def pretty_print_json(dict_object: object):
 class Plotter:
     ''' Plotting Class for Graphs & Visualisations
     '''
-    def __init__(self, path):
-        self.path = path
-
+    def __init__(self):
+        pass
 
     def plot_train_val(self, data:dict, title:str, output_folder:str, xaxis='X-Axis Filler', yaxis='Y-Axis Filler'):
         '''  Plotting function for analysing learning history
@@ -130,5 +129,47 @@ class Plotter:
         if save_path:
             plt.savefig(save_path)
         plt.close()
+
+
+
+    def line_plot(self, ranked_df):
+        ''' 
+        '''
+        df = ranked_df.copy()  # or whatever your allocation df is called
+        df = df.sort_values("allocation_score", ascending=False).reset_index(drop=True)
+
+        plt.figure()
+        plt.plot(df["allocation_score"].values)
+        plt.xlabel("Rank (0 = highest)")
+        plt.ylabel("Allocation score")
+        plt.title("Allocation score drop-off by rank")
+        plt.show()
+
+
+    def bar_plot(self, ranked_df):
+        '''
+        '''
+        top_n = 25
+        df = ranked_df.sort_values("allocation_score", ascending=False).head(top_n)
+
+        plt.figure()
+        plt.bar(df["stock"], df["allocation_score"])
+        plt.xticks(rotation=90)
+        plt.xlabel("Stock")
+        plt.ylabel("Allocation score")
+        plt.title(f"Top {top_n} allocation scores")
+        plt.tight_layout()
+        plt.show()
+
+
+    def histogram_plot(self, ranked_df):
+        '''
+        '''
+        plt.figure()
+        plt.hist(ranked_df["allocation_score"].dropna(), bins=30)
+        plt.xlabel("Allocation score")
+        plt.ylabel("Count")
+        plt.title("Distribution of allocation scores")
+        plt.show()
 
         
