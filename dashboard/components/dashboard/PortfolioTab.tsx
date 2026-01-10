@@ -253,7 +253,7 @@ export default function PortfolioTab() {
   );
 
   /**
-   * ✅ Key fix: precompute `fill` on the treemap data itself.
+   * Key fix: precompute `fill` on the treemap data itself.
    * Recharts passes `fill` to content reliably, even when `payload` is empty.
    */
   const treemapWithFill = useMemo(() => {
@@ -310,7 +310,7 @@ export default function PortfolioTab() {
                     nameKey="name"
                     stroke="rgba(0,0,0,0.08)"
                     isAnimationActive={false}
-                    // ✅ makes recharts propagate each node's `fill` into props
+                    // makes recharts propagate each node's `fill` into props
                     fill="#94a3b8"
                     content={<TreemapLeafLabelsOnly />}
                   >
