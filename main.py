@@ -530,12 +530,22 @@ def run_stock_backtests(stock_name:list):
     Returns:
         RUns multiple backtests using different model architectures
     '''
-    for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
-        backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
-                                    model_type=ensemble_type,
-                                    stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
-                                    stock_name=stock_name,
-                                    backtest_output_path='data/results/backtests/')
+    # for ensemble_type in ['XGBoost_V1', 'LGBM_V1']:
+    #     backtest_model_performance(parquet_path=f'data/results/trained_models/ensembles/{stock_name}/{ensemble_type}/{ensemble_type}.parquet', 
+    #                                 model_type=ensemble_type,
+    #                                 stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+    #                                 stock_name=stock_name,
+    #                                 backtest_output_path='data/results/backtests/')
+    
+    print('Stock Name:::', stock_name)
+    for qml_model in os.listdir(f'data/results/trained_models/qml/{stock_name}/'):
+        for model_variant in os.listdir(f'data/results/trained_models/qml/{stock_name}/{qml_model}/'):
+            backtest_model_performance(parquet_path=f'data/results/trained_models/qml/{stock_name}/{qml_model}/{model_variant}/{model_variant}.parquet', 
+                                        model_type=qml_model,
+                                        stock_hist_path=f'data/csv/historical/training/cleaned/{stock_name}.csv',
+                                        stock_name=stock_name,
+                                        backtest_output_path='data/results/backtests/')
+
             
 
 
@@ -691,13 +701,13 @@ def main():
     architecture_list = ['quantum']  # ensemble
     sys = 'linux'
     # NOTE - For running the entire pipelien in plan above 
-    run_full_pipeline(
-        portfolio_symbols, 
-        download_path='data/csv/historical/training/raw/',
-        architectrure_list=architecture_list,
-        system=sys
-    )
-    a-b
+    # run_full_pipeline(
+    #     portfolio_symbols, 
+    #     download_path='data/csv/historical/training/raw/',
+    #     architectrure_list=architecture_list,
+    #     system=sys
+    # )
+
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
     # run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json', performance_dict_path='data/json/stock_specific_model_rankings.json')
 
