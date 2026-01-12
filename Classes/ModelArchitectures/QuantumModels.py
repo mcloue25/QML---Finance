@@ -1,165 +1,269 @@
+"""
+qml_kernel_svc.py
+
+Modular quantum-kernel SVC training utilities for PennyLane Lightning (CPU/GPU).
+
+Major speedup (math optimisation):
+- Build kernels via state embeddings:
+    1) Compute |psi(x)> once per sample (O(N) circuit calls)
+    2) Compute Gram / cross-kernels via matrix multiplies (fast BLAS):
+         S = Psi @ Psi*.T
+         K = |S|^2
+
+This replaces pairwise circuit evaluation (O(N^2) circuit calls).
+
+Design notes
+- No globals: configuration lives in QMLConfig.
+- Device is created before the QNode (important: QNodes bind to the device at creation).
+- Kernel builders accept a kernel "engine" so CPU/GPU/backends are swappable.
+- Uses qml.state() + overlaps for kernels (fastest for small n_qubits).
+
+Typical usage
+- qml_cfg = build_qml_config(n_qubits=3, system="linux", kernel_mode="state")
+- results = quantum_kernel_train_loop(..., qml_cfg=qml_cfg, ...)
+"""
+
+from __future__ import annotations
+
 import time
-import hashlib
+from dataclasses import dataclass
+from typing import Callable, Dict, Iterable, List, Optional, Tuple, Any, Literal
 
 import numpy as np
 import pennylane as qml
-
 from tqdm import tqdm
+
 from sklearn.svm import SVC
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import log_loss, f1_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
 
 
-n_qubits = 3
-dev = qml.device("lightning.qubit", wires=n_qubits)
-'''
-Need to dual boot with linux and insta;; ;ightening-gpu:
-    * pip install pennylane-lightning-gpu
-'''
+# -------------------------
+# Types / config container
+# -------------------------
 
-def feature_map(x, depth=2):
-    ''' Quantum feature map that embeds the classical feature vector into a quantum state.
+# For legacy (pairwise) kernels: takes two feature vectors and depth, returns scalar in [0,1].
+KernelFn = Callable[[np.ndarray, np.ndarray, int], float]
+
+KernelMode = Literal["state", "pairwise"]
+
+
+@dataclass(frozen=True)
+class QMLConfig:
+    """Holds quantum configuration and the callables needed by the training loop.
+
+    Attributes:
+        n_qubits: Number of qubits / wires.
+        simulator: PennyLane device name (e.g. "lightning.qubit", "lightning.gpu").
+        feature_depth_default: Default feature-map depth.
+        kernel_mode: "state" (fast) or "pairwise" (legacy).
+        dev: PennyLane device instance.
+        feature_map: Callable applying the feature-map gates.
+        state_circuit: QNode returning qml.state() (used in kernel_mode="state").
+        kernel_fn: Pairwise kernel callable (used in kernel_mode="pairwise").
+    """
+    n_qubits: int
+    simulator: str = "lightning.qubit"
+    feature_depth_default: int = 2
+    kernel_mode: KernelMode = "state"
+
+    dev: Any = None
+    feature_map: Optional[Callable[[np.ndarray, int], None]] = None
+
+    # state-kernel mode
+    state_circuit: Optional[Callable[[np.ndarray, int], np.ndarray]] = None
+
+    # pairwise-kernel mode (fallback)
+    kernel_fn: Optional[KernelFn] = None
+
+
+def make_device(n_qubits: int, simulator: str) -> Any:
+    """Create and return a PennyLane device."""
+    return qml.device(simulator, wires=n_qubits)
+
+
+def feature_map_factory(n_qubits: int) -> Callable[[np.ndarray, int], None]:
+    """Create a feature-map function bound to n_qubits (no globals)."""
+    def feature_map(x: np.ndarray, depth: int = 2) -> None:
+        for _ in range(depth):
+            for i in range(n_qubits):
+                qml.RY(x[i], wires=i)
+
+            # Kept identical to your original (guarded for n_qubits < 3).
+            if n_qubits >= 2:
+                qml.CNOT(wires=[0, 1])
+            if n_qubits >= 3:
+                qml.CNOT(wires=[1, 2])
+
+    return feature_map
+
+
+# -------------------------
+# Pairwise-kernel circuit (legacy / fallback)
+# -------------------------
+
+def make_kernel_qnode(
+    dev: Any,
+    n_qubits: int,
+    feature_map: Callable[[np.ndarray, int], None],
+) -> KernelFn:
+    """Build a pairwise kernel function k(x1, x2, depth) -> float via Projector(|0...0>)."""
+    projector_state = [0] * n_qubits
+    wires = list(range(n_qubits))
+
+    @qml.qnode(dev, diff_method=None)
+    def _kernel_circuit(x1: np.ndarray, x2: np.ndarray, depth: int = 2):
+        feature_map(x1, depth=depth)
+        qml.adjoint(feature_map)(x2, depth=depth)
+        return qml.expval(qml.Projector(projector_state, wires=wires))
+
+    def kernel_fn(x1: np.ndarray, x2: np.ndarray, depth: int = 2) -> float:
+        return float(_kernel_circuit(x1, x2, depth=depth))
+
+    return kernel_fn
+
+
+# -------------------------
+# State-embedding circuit (fast path)
+# -------------------------
+
+def make_state_qnode(
+    dev: Any,
+    n_qubits: int,
+    feature_map: Callable[[np.ndarray, int], None],
+) -> Callable[[np.ndarray, int], np.ndarray]:
+    """Build a QNode returning the statevector |psi(x)> for a given x and depth."""
+    @qml.qnode(dev, diff_method=None)
+    def state_circuit(x: np.ndarray, depth: int = 2):
+        feature_map(x, depth=depth)
+        return qml.state()
+
+    return state_circuit
+
+
+def embed_states(
+    X: np.ndarray,
+    state_circuit: Callable[[np.ndarray, int], np.ndarray],
+    depth: int = 2,
+    show_progress: bool = False,
+) -> np.ndarray:
+    """Compute statevectors for all rows of X (O(N) circuit calls)."""
+    N = len(X)
+    states: List[np.ndarray] = []
+
+    it = range(N)
+    if show_progress:
+        it = tqdm(it, desc="Embedding states", leave=False)
+
+    for i in it:
+        states.append(state_circuit(X[i], depth=depth))
+
+    # shape: (N, 2**n_qubits), complex
+    return np.asarray(states)
+
+
+def gram_from_states(states: np.ndarray) -> np.ndarray:
+    """Compute Gram matrix K_ij = |<psi_i|psi_j>|^2 via BLAS."""
+    S = states @ states.conj().T
+    K = (np.abs(S) ** 2).astype(np.float32)
+
+    # Numerical cleanup (optional but usually helpful)
+    K = 0.5 * (K + K.T)
+    np.clip(K, 0.0, 1.0, out=K)
+    return K
+
+
+def cross_kernel_from_states(states_A: np.ndarray, states_B: np.ndarray) -> np.ndarray:
+    """Compute cross-kernel K_ij = |<psi_Ai|psi_Bj>|^2."""
+    S = states_A @ states_B.conj().T
+    K = (np.abs(S) ** 2).astype(np.float32)
+    np.clip(K, 0.0, 1.0, out=K)
+    return K
+
+
+# -------------------------
+# Build config
+# -------------------------
+
+def build_qml_config(
+    n_qubits: int,
+    system: str = "windows",
+    cpu_sim: str = "lightning.qubit",
+    gpu_sim: str = "lightning.gpu",
+    feature_depth_default: int = 2,
+    kernel_mode: KernelMode = "state",
+) -> QMLConfig:
+    """Create a ready-to-run quantum config.
+
     Args:
-        x (array-like): Classical input features (length = n_qubits)
-        depth (int): Number of repeated encoding + entanglement layers
-    '''
-    # Repeat encoding/entanglement to increase circuit expressivity
-    for _ in range(depth):
-        # Encode each feature as a single-qubit rotation
-        # NOTE - ANGULAR ENCODING
-        for i in range(n_qubits):
-            qml.RY(x[i], wires=i)
+        n_qubits: Number of wires.
+        system: "linux" -> gpu_sim, otherwise cpu_sim.
+        cpu_sim: CPU device name.
+        gpu_sim: GPU device name.
+        feature_depth_default: Default depth stored in the config.
+        kernel_mode: "state" (fast, recommended) or "pairwise" (fallback).
 
-        # NOTE - Lightweight entangled encoding
-        qml.CNOT(wires=[0, 1])
-        qml.CNOT(wires=[1, 2])
-
-
-
-@qml.qnode(dev)
-def kernel_circuit(x1, x2, depth=2):
-    ''' Quantum circuit computing the state overlap (fidelity) between two feature-embedded quantum states.
-    Args:
-        x1 (array-like): First input feature vector
-        x2 (array-like): Second input feature vector
-        depth (int): Feature-map depth
     Returns:
-        probs (np.ndarray): Measurement probabilities over all basis states (|000> probability equals kernel value)
-    '''
+        QMLConfig with device + feature_map and the right circuit for the chosen mode.
+    """
+    simulator = gpu_sim if system.lower() == "linux" else cpu_sim
+    dev = make_device(n_qubits, simulator)
+    fmap = feature_map_factory(n_qubits)
 
-    # Prepare |ψ(x1)>
-    feature_map(x1, depth=depth)
-    # Apply inverse of feature map for x2: U(x2)†
-    qml.adjoint(feature_map)(x2, depth=depth)
-    # Measure probability of returning to |0...0>
-    return qml.probs(wires=range(n_qubits))
+    if kernel_mode == "state":
+        state_circuit = make_state_qnode(dev, n_qubits, fmap)
+        return QMLConfig(
+            n_qubits=n_qubits,
+            simulator=simulator,
+            feature_depth_default=feature_depth_default,
+            kernel_mode=kernel_mode,
+            dev=dev,
+            feature_map=fmap,
+            state_circuit=state_circuit,
+            kernel_fn=None,
+        )
+
+    # fallback / legacy
+    kernel_fn = make_kernel_qnode(dev, n_qubits, fmap)
+    return QMLConfig(
+        n_qubits=n_qubits,
+        simulator=simulator,
+        feature_depth_default=feature_depth_default,
+        kernel_mode=kernel_mode,
+        dev=dev,
+        feature_map=fmap,
+        state_circuit=None,
+        kernel_fn=kernel_fn,
+    )
 
 
+# -------------------------
+# Cache utilities
+# -------------------------
 
 class KernelCache:
-    ''' Simple in-memory cache for storing precomputed kernel matrices.
-    Used to avoid recomputing expensive quantum kernels across:
-      - multiple C values
-      - repeated folds
-    '''
+    """In-memory cache for expensive kernel matrices.
+
+    Notes:
+      - Keys should include fold/depth (and cut for chrono calibration).
+      - With state-kernel mode, caching the *kernels* is usually enough.
+    """
     def __init__(self):
-        self._cache = {}
+        self._cache: Dict[Any, np.ndarray] = {}
 
     def get(self, key):
-        ''' Retrieve cached object.
-        Args:
-            key (hashable): Unique identifier for kernel matrix
-        Returns:
-            Cached value or None if not found
-        '''
         return self._cache.get(key, None)
 
-    def set(self, key, value):
-        ''' Store kernel matrix in cache.
-        Args:
-            key (hashable): Cache key
-            value (np.ndarray): Kernel matrix
-        '''
+    def set(self, key, value: np.ndarray):
         self._cache[key] = value
 
     def clear(self):
-        '''Clear all cached kernels to free memory.'''
         self._cache.clear()
 
 
-
-def quantum_kernel(X1, X2, depth=2, show_progress=False):
-    ''' Compute a (non-symmetric) quantum kernel matrix.
-    Args:
-        X1 (np.ndarray): Left feature matrix, shape (N1, d)
-        X2 (np.ndarray): Right feature matrix, shape (N2, d)
-        depth (int): Feature-map depth
-        show_progress (bool): Whether to display tqdm progress bar
-    Returns:
-        K (np.ndarray): Kernel matrix of shape (N1, N2)
-    '''
-
-    # Allocate kernel matrix
-    K = np.zeros((len(X1), len(X2)), dtype=np.float32)
-
-    # Optional progress bar over rows
-    iterator = enumerate(X1)
-    if show_progress:
-        from tqdm import tqdm
-        iterator = tqdm(iterator, total=len(X1), desc="Quantum kernel rows", leave=False)
-
-    # Compute kernel entries pairwise
-    for i, x1 in iterator:
-        for j, x2 in enumerate(X2):
-            probs = kernel_circuit(x1, x2, depth=depth)
-            K[i, j] = probs[0]  # fidelity |⟨ψ(x1)|ψ(x2)⟩|²
-
-    return K
-
-
-
-
-def quantum_kernel_symmetric(X, depth=2, show_progress=False):
-    ''' Compute a symmetric quantum kernel matrix efficiently.
-    Args:
-        X (np.ndarray): Feature matrix, shape (N, d)
-        depth (int): Feature-map depth
-        show_progress (bool): Whether to display tqdm progress bar
-    Returns:
-        K (np.ndarray): Symmetric kernel matrix, shape (N, N)
-    '''
-    n = len(X)
-    K = np.zeros((n, n), dtype=np.float32)
-
-    # Optional progress bar
-    it = range(n)
-    if show_progress:
-        from tqdm import tqdm
-        it = tqdm(it, desc="Quantum kernel (symmetric)", leave=False)
-
-    for i in it:
-        K[i, i] = 1.0  # exact self-overlap
-        for j in range(i + 1, n):
-            probs = kernel_circuit(X[i], X[j], depth=depth)
-            val = float(probs[0])
-            K[i, j] = val
-            K[j, i] = val  # exploit symmetry
-
-    return K
-
-
-def get_cached_kernel_fold(cache, key, builder):
-    ''' Retrieve a kernel matrix from cache or compute and store it.
-    Args:
-        cache (KernelCache): Cache instance
-        key (tuple): Unique identifier (e.g. stock, fold, depth)
-        builder (callable): Zero-argument function that computes the kernel
-    Returns:
-        K (np.ndarray): Kernel matrix
-    '''
+def get_cached_kernel_fold(cache: KernelCache, key, builder: Callable[[], np.ndarray]) -> np.ndarray:
+    """Return cached matrix, or compute+cache via builder."""
     K = cache.get(key)
     if K is None:
         K = builder()
@@ -167,45 +271,288 @@ def get_cached_kernel_fold(cache, key, builder):
     return K
 
 
+# -------------------------
+# Kernel matrix builders (dispatch)
+# -------------------------
 
-def quantum_kernel_train_loop(X_dev, y_dev, X_test, y_test, splits, depth=2, C=1.0, model_tag="QKernelSVC", cache=None, stock_name=""):
-    ''' End-to-end training loop for a quantum-kernel SVC:
-        Walk-forward OOF training on dev set
-        Chronologically calibrated evaluation on test set
-        Aggregates economic- and ML-relevant metrics
-    Args:
-        X_dev (np.ndarray): Development features (time-ordered)
-        y_dev (np.ndarray): Development labels
-        X_test (np.ndarray): Test features (strictly future of dev)
-        y_test (np.ndarray): Test classes (strictly future of dev)
-        depth (int): Quantum feature map depth
-        C (float): SVC regularization parameter
-        cal_size (float): Fraction of dev reserved for calibration (0 < cal_size < 1)
-        cache (KernelCache): Cache for storing/reusing kernel matrices
-        stock_name (str): Identifier to prevent cache collisions across assets
-    '''
+def build_train_gram(
+    X_train: np.ndarray,
+    qml_cfg: QMLConfig,
+    depth: int,
+    show_progress: bool,
+) -> np.ndarray:
+    """Build K_train (train vs train) using the configured kernel mode."""
+    if qml_cfg.kernel_mode == "state":
+        assert qml_cfg.state_circuit is not None
+        states_train = embed_states(X_train, qml_cfg.state_circuit, depth=depth, show_progress=show_progress)
+        return gram_from_states(states_train)
+
+    assert qml_cfg.kernel_fn is not None
+    return quantum_kernel_symmetric_pairwise(X_train, qml_cfg.kernel_fn, depth=depth, show_progress=show_progress)
+
+
+def build_cross_kernel(
+    X_left: np.ndarray,
+    X_right: np.ndarray,
+    qml_cfg: QMLConfig,
+    depth: int,
+    show_progress: bool,
+) -> np.ndarray:
+    """Build cross-kernel K (left vs right) using the configured kernel mode."""
+    if qml_cfg.kernel_mode == "state":
+        assert qml_cfg.state_circuit is not None
+        states_left = embed_states(X_left, qml_cfg.state_circuit, depth=depth, show_progress=show_progress)
+        states_right = embed_states(X_right, qml_cfg.state_circuit, depth=depth, show_progress=False)
+        return cross_kernel_from_states(states_left, states_right)
+
+    assert qml_cfg.kernel_fn is not None
+    return quantum_kernel_pairwise(X_left, X_right, qml_cfg.kernel_fn, depth=depth, show_progress=show_progress)
+
+
+# -------------------------
+# Pairwise kernel builders (kept for fallback)
+# -------------------------
+
+def quantum_kernel_pairwise(
+    X1: np.ndarray,
+    X2: np.ndarray,
+    kernel_fn: KernelFn,
+    depth: int = 2,
+    show_progress: bool = False,
+) -> np.ndarray:
+    """Compute cross-kernel via pairwise circuit calls (slow)."""
+    K = np.zeros((len(X1), len(X2)), dtype=np.float32)
+
+    iterator = enumerate(X1)
+    if show_progress:
+        iterator = tqdm(iterator, total=len(X1), desc="Quantum kernel rows", leave=False)
+
+    for i, x1 in iterator:
+        for j, x2 in enumerate(X2):
+            K[i, j] = kernel_fn(x1, x2, depth=depth)
+
+    return K
+
+
+def quantum_kernel_symmetric_pairwise(
+    X: np.ndarray,
+    kernel_fn: KernelFn,
+    depth: int = 2,
+    show_progress: bool = False,
+) -> np.ndarray:
+    """Compute symmetric Gram matrix via pairwise circuit calls (slow)."""
+    n = len(X)
+    K = np.zeros((n, n), dtype=np.float32)
+
+    it = range(n)
+    if show_progress:
+        it = tqdm(it, desc="Quantum kernel (symmetric)", leave=False)
+
+    for i in it:
+        K[i, i] = 1.0
+        for j in range(i + 1, n):
+            val = kernel_fn(X[i], X[j], depth=depth)
+            K[i, j] = val
+            K[j, i] = val
+
+    return K
+
+
+# -------------------------
+# Training loops (SVC + calibration)
+# -------------------------
+
+def fit_predict_quantum_kernel_oof_calibrated(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: Iterable[Tuple[np.ndarray, np.ndarray]],
+    qml_cfg: QMLConfig,
+    depth: int = 2,
+    C: float = 1.0,
+    cache: Optional[KernelCache] = None,
+    stock_name: str = "",
+    show_kernel_progress: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, List[float]], KernelCache]:
+    """Walk-forward OOF training with fold-safe scaling and calibration."""
+    if cache is None:
+        cache = KernelCache()
+
+    classes = np.array(sorted(np.unique(y)))
+    n_classes = len(classes)
+
+    oof_proba = np.full((len(X), n_classes), np.nan, dtype=np.float64)
+    oof_pred = np.full(len(X), np.nan)
+
+    hist: Dict[str, List[float]] = {"fold": [], "macro_f1": [], "log_loss": []}
+
+    splits = list(splits)
+
+    for fold, (train_idx, val_idx) in enumerate(tqdm(splits, desc="QML Walk-Forward CV"), 1):
+        X_train_raw, y_train = X[train_idx], y[train_idx]
+        X_val_raw, y_val = X[val_idx], y[val_idx]
+
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train_raw)
+        X_val = scaler.transform(X_val_raw)
+
+        # --- build kernels (FAST: state embeddings + GEMM) ---
+        K_train = get_cached_kernel_fold(
+            cache,
+            key=("K_train", stock_name, fold, depth, qml_cfg.kernel_mode, qml_cfg.simulator),
+            builder=lambda: build_train_gram(X_train, qml_cfg, depth=depth, show_progress=show_kernel_progress),
+        )
+
+        K_val = get_cached_kernel_fold(
+            cache,
+            key=("K_val", stock_name, fold, depth, qml_cfg.kernel_mode, qml_cfg.simulator),
+            builder=lambda: build_cross_kernel(X_val, X_train, qml_cfg, depth=depth, show_progress=show_kernel_progress),
+        )
+
+        svc = SVC(kernel="precomputed", C=C)
+        svc.fit(K_train, y_train)
+
+        scores_val = svc.decision_function(K_val)
+        if scores_val.ndim == 1:
+            scores_val = scores_val.reshape(-1, 1)
+
+        cal = LogisticRegression(max_iter=2000, solver="lbfgs")
+        cal.fit(scores_val, y_val)
+
+        proba_val = cal.predict_proba(scores_val)
+        pred_val = np.argmax(proba_val, axis=1)
+
+        oof_proba[val_idx] = proba_val
+        oof_pred[val_idx] = pred_val
+
+        f1 = f1_score(y_val, pred_val, average="macro")
+        ll = log_loss(y_val, proba_val, labels=classes)
+
+        hist["fold"].append(fold)
+        hist["macro_f1"].append(float(f1))
+        hist["log_loss"].append(float(ll))
+
+        tqdm.write(f"Fold {fold}: macroF1={f1:.4f} ::: log_loss={ll:.4f}")
+
+    return oof_pred.astype(int), oof_proba, hist, cache
+
+
+def fit_quantum_kernel_and_predict_test_chrono_cal(
+    X_dev: np.ndarray,
+    y_dev: np.ndarray,
+    X_test: np.ndarray,
+    qml_cfg: QMLConfig,
+    depth: int = 2,
+    C: float = 1.0,
+    cal_size: float = 0.2,
+    cache: Optional[KernelCache] = None,
+    stock_name: str = "",
+    show_kernel_progress: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, KernelCache]:
+    """Chronological train->calibrate->deploy evaluation on test."""
+    if cache is None:
+        cache = KernelCache()
+
+    n = len(y_dev)
+    cut = int(n * (1 - cal_size))
+    if cut <= 0 or cut >= n:
+        raise ValueError("Invalid cal_size; must leave both train and calibration slices non-empty.")
+
+    X_train, y_train = X_dev[:cut], y_dev[:cut]
+    X_cal, y_cal = X_dev[cut:], y_dev[cut:]
+
+    scaler = StandardScaler()
+    X_tr_s = scaler.fit_transform(X_train)
+    X_cal_s = scaler.transform(X_cal)
+    X_test_s = scaler.transform(X_test)
+
+    K_train = get_cached_kernel_fold(
+        cache,
+        key=("K_dev_train", stock_name, depth, cut, qml_cfg.kernel_mode, qml_cfg.simulator),
+        builder=lambda: build_train_gram(X_tr_s, qml_cfg, depth=depth, show_progress=show_kernel_progress),
+    )
+
+    K_cal = get_cached_kernel_fold(
+        cache,
+        key=("K_dev_cal", stock_name, depth, cut, qml_cfg.kernel_mode, qml_cfg.simulator),
+        builder=lambda: build_cross_kernel(X_cal_s, X_tr_s, qml_cfg, depth=depth, show_progress=show_kernel_progress),
+    )
+
+    K_test = get_cached_kernel_fold(
+        cache,
+        key=("K_test", stock_name, depth, cut, qml_cfg.kernel_mode, qml_cfg.simulator),
+        builder=lambda: build_cross_kernel(X_test_s, X_tr_s, qml_cfg, depth=depth, show_progress=show_kernel_progress),
+    )
+
+    svc = SVC(kernel="precomputed", C=C)
+    svc.fit(K_train, y_train)
+
+    scores_cal = svc.decision_function(K_cal)
+    scores_test = svc.decision_function(K_test)
+
+    if scores_cal.ndim == 1:
+        scores_cal = scores_cal.reshape(-1, 1)
+        scores_test = scores_test.reshape(-1, 1)
+
+    cal = LogisticRegression(max_iter=2000, solver="lbfgs")
+    cal.fit(scores_cal, y_cal)
+
+    test_proba = cal.predict_proba(scores_test)
+    test_pred = np.argmax(test_proba, axis=1)
+
+    return test_pred, test_proba, cache
+
+
+def quantum_kernel_train_loop(
+    X_dev: np.ndarray,
+    y_dev: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    splits: Iterable[Tuple[np.ndarray, np.ndarray]],
+    qml_cfg: QMLConfig,
+    depth: int = 2,
+    C: float = 1.0,
+    model_tag: str = "QKernelSVC",
+    cache: Optional[KernelCache] = None,
+    stock_name: str = "",
+    show_kernel_progress: bool = True,
+) -> Dict[str, Any]:
+    """Run OOF dev training + chrono calibration test evaluation for a single C."""
     t0 = time.time()
+    splits = list(splits)
+
     print(f"[{model_tag}] DEV samples: {len(y_dev):,} | TEST samples: {len(y_test):,}")
     print(f"[{model_tag}] CV folds: {len(splits)} | depth={depth} | C={C}\n")
+    print(f"[{model_tag}] Kernel mode: {qml_cfg.kernel_mode} | Simulator: {qml_cfg.simulator}")
 
-    # NOTE - OOF Training
-    oof_pred, oof_proba, hist, cache = fit_predict_quantum_kernel_oof_calibrated(X=X_dev, y=y_dev, splits=splits, depth=depth, C=C, cache=cache, stock_name=stock_name)
-    
-    # NOTE - Test
-    # Final model evaluation on test set with chronological calibration (train --> calibrate --> deploy)
+    oof_pred, oof_proba, hist, cache = fit_predict_quantum_kernel_oof_calibrated(
+        X=X_dev,
+        y=y_dev,
+        splits=splits,
+        qml_cfg=qml_cfg,
+        depth=depth,
+        C=C,
+        cache=cache,
+        stock_name=stock_name,
+        show_kernel_progress=show_kernel_progress,
+    )
+
     test_pred, test_proba, cache = fit_quantum_kernel_and_predict_test_chrono_cal(
-        X_dev=X_dev, y_dev=y_dev, X_test=X_test,
-        depth=depth, C=C,
+        X_dev=X_dev,
+        y_dev=y_dev,
+        X_test=X_test,
+        qml_cfg=qml_cfg,
+        depth=depth,
+        C=C,
         cal_size=0.2,
         cache=cache,
-        stock_name=stock_name
+        stock_name=stock_name,
+        show_kernel_progress=show_kernel_progress,
     )
-    # Test set metrics
+
     test_f1 = f1_score(y_test, test_pred, average="macro")
     test_loss = log_loss(y_test, test_proba, labels=[0, 1, 2])
     runtime_sec = time.time() - t0
 
-    # Collect results for downstream analysis / backtesting
     results = {
         "oof_pred": oof_pred,
         "oof_proba": oof_proba,
@@ -222,296 +569,11 @@ def quantum_kernel_train_loop(X_dev, y_dev, X_test, y_test, splits, depth=2, C=1
         "model_tag": model_tag,
         "qml_depth": depth,
         "qml_C": C,
+        "kernel_mode": qml_cfg.kernel_mode,
+        "simulator": qml_cfg.simulator,
     }
 
     print(f"\n[{model_tag}] TEST macroF1: {test_f1:.4f}")
     print(f"[{model_tag}] TEST log loss: {test_loss:.4f}")
     print(f"[{model_tag}] Runtime: {runtime_sec:.1f}s")
     return results
-
-
-
-def fit_predict_quantum_kernel_oof_calibrated(X, y, splits, depth=2, C=1.0, cache=None, stock_name=""):
-    ''' Walk-forward out-of-fold (OOF) training for a quantum-kernel SVC with fold-safe probability calibration.
-    For each time-series split:
-      - Compute quantum kernel Gram matrices (with caching)
-      - Train an SVC on the training fold
-      - Calibrate decision scores -> probabilities on the validation fold
-      - Store OOF probabilities and predictions aligned to original indices
-
-    Args:
-        X (np.ndarray): Feature matrix (time-ordered)
-        y (np.ndarray): Target labels
-        splits (iterable): Walk-forward splits yielding (train_idx, val_idx)
-        depth (int): Depth of the quantum feature map
-        C (float): SVC regularization parameter
-        cache (KernelCache): Cache for storing/reusing kernel matrices
-        stock_name (str): Identifier to avoid cache collisions across assets
-
-    Returns:
-        oof_pred (np.ndarray): OOF class predictions, shape (T,)
-        oof_proba (np.ndarray): OOF class probabilities, shape (T, n_classes)
-        hist (dict): Per-fold performance metrics
-        cache (KernelCache): Updated kernel cache
-    '''
-    # Initialize cache if not provided (allows reuse across C values)
-    if cache is None:
-        cache = KernelCache()
-
-    # Identify class labels and dimensionality
-    classes = np.array(sorted(np.unique(y)))
-    n_classes = len(classes)
-
-    # Preallocate OOF containers (NaNs ensure alignment sanity)
-    oof_proba = np.full((len(X), n_classes), np.nan)
-    oof_pred = np.full(len(X), np.nan)
-
-    # Store fold-level metrics for diagnostics
-    hist = {
-        "fold": [],
-        "macro_f1": [],
-        "log_loss": []
-    }
-
-    # Walk-forward cross-validation loop
-    for fold, (train_idx, val_idx) in enumerate(tqdm(splits, desc="QML Walk-Forward CV", total=len(splits)), 1):
-        # Split raw data (strict temporal ordering)
-        X_train_raw, y_train = X[train_idx], y[train_idx]
-        X_val_raw, y_val = X[val_idx], y[val_idx]
-
-        
-        # Fold-safe scaling:
-        #   - Fit scaler on training fold only
-        #   - Apply to validation fold
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train_raw)
-        X_val = scaler.transform(X_val_raw)
-
-        
-        # Quantum kernel computation with caching
-        # K_train:
-        #   - Symmetric Gram matrix (train vs train)
-        #   - Cached per (stock, fold, depth)
-        K_train = get_cached_kernel_fold(
-            cache,
-            key=("K_train", stock_name, fold, depth),
-            builder=lambda: quantum_kernel_symmetric(
-                X_train,
-                depth=depth,
-                show_progress=True
-            )
-        )
-        # K_val:
-        #   - Cross-kernel (val vs train)
-        K_val = get_cached_kernel_fold(
-            cache,
-            key=("K_val", stock_name, fold, depth),
-            builder=lambda: quantum_kernel(
-                X_val,
-                X_train,
-                depth=depth,
-                show_progress=True
-            )
-        )
-
-        # Train base SVC on precomputed quantum kernel
-        svc = SVC(kernel="precomputed", C=C)
-        svc.fit(K_train, y_train)
-
-        # Obtain raw decision scores on validation set shape handling for binary vs multiclass
-        scores_val = svc.decision_function(K_val)
-        if scores_val.ndim == 1:
-            scores_val = scores_val.reshape(-1, 1)
-
-        
-        # Fold-safe probability calibration
-        # Logistic regression is used as a multinomial calibrator
-        # mapping SVC decision scores --> calibrated probabilities.
-        cal = LogisticRegression(
-            multi_class="multinomial",
-            max_iter=2000
-        )
-        cal.fit(scores_val, y_val)
-
-        # Calibrated probabilities and predictions
-        proba_val = cal.predict_proba(scores_val)
-        pred_val = np.argmax(proba_val, axis=1)
-
-        
-        # Store OOF predictions aligned to original indices
-        oof_proba[val_idx] = proba_val
-        oof_pred[val_idx] = pred_val
-
-        # Fold evaluation metrics
-        f1 = f1_score(y_val, pred_val, average="macro")
-        ll = log_loss(y_val, proba_val, labels=classes)
-
-        hist["fold"].append(fold)
-        hist["macro_f1"].append(float(f1))
-        hist["log_loss"].append(float(ll))
-
-        tqdm.write(
-            f"Fold {fold}: macroF1={f1:.4f} ::: log_loss={ll:.4f}"
-        )
-
-    # Return OOF predictions, probabilities, metrics, and updated cache
-    return oof_pred.astype(int), oof_proba, hist, cache
-
-
-
-
-def fit_quantum_kernel_and_predict_test_chrono_cal(X_dev:np.ndarray, y_dev:np.ndarray, X_test:np.ndarray, depth:int=2, C:float=1.0, cal_size:float=0.2, cache=None, stock_name:str=""):
-    ''' Train a quantum-kernel SVC on the early portion of the development set,
-        calibrate probabilities on a later (chronologically subsequent) slice and evaluate on the test set.
-        This avoids in sample calibration optimism by enforcing the
-        time ordering:
-            train --> calibrate --> deploy
-    Args:
-        X_dev (np.ndarray): Development features (time-ordered)
-        y_dev (np.ndarray): Development labels
-        X_test (np.ndarray): Test features (strictly future of dev)
-        depth (int): Quantum feature map depth
-        C (float): SVC regularization parameter
-        cal_size (float): Fraction of dev reserved for calibration (0 < cal_size < 1)
-        cache (KernelCache): Cache for storing/reusing kernel matrices
-        stock_name (str): Identifier to prevent cache collisions across assets
-    Returns:
-        test_pred (np.ndarray): Predicted test labels
-        test_proba (np.ndarray): Calibrated test probabilities
-        cache (KernelCache): Updated kernel cache
-    '''
-    # Initialize cache if not provided
-    if cache is None:
-        cache = KernelCache()
-
-    # Determine chronological split point for calibration
-    n = len(y_dev)
-    cut = int(n * (1 - cal_size))
-
-    # Ensure both training and calibration sets are non-empty
-    if cut <= 0 or cut >= n:
-        raise ValueError(
-            "Invalid cal_size; must leave both train and calibration slices non-empty."
-        )
-
-    # Chronological split of development data
-    # dev_train: early period (model fitting)
-    # dev_cal: later period (probability calibration)
-    X_train, y_train = X_dev[:cut], y_dev[:cut]
-    X_cal, y_cal = X_dev[cut:], y_dev[cut:]
-
-    
-    # Fold-safe scaling
-    # Scaler is fit ONLY on dev_train to prevent leakage and then applied to calibration and test sets.
-    scaler = StandardScaler()
-    X_tr_s = scaler.fit_transform(X_train)
-    X_cal_s = scaler.transform(X_cal)
-    X_test_s = scaler.transform(X_test)
-
-    
-    # Quantum kernel construction (with caching)
-    # Symmetric Gram matrix for dev_train
-    K_train = get_cached_kernel_fold(
-        cache,
-        key=("K_dev_train", stock_name, depth, cut),
-        builder=lambda: quantum_kernel_symmetric(
-            X_tr_s,
-            depth=depth,
-            show_progress=True
-        )
-    )
-    # Cross-kernel between dev_cal and dev_train
-    K_cal = get_cached_kernel_fold(
-        cache,
-        key=("K_dev_cal", stock_name, depth, cut),
-        builder=lambda: quantum_kernel(
-            X_cal_s,
-            X_tr_s,
-            depth=depth,
-            show_progress=True
-        )
-    )
-    # Cross-kernel between test and dev_train
-    K_test = get_cached_kernel_fold(
-        cache,
-        key=("K_test", stock_name, depth, cut),
-        builder=lambda: quantum_kernel(
-            X_test_s,
-            X_tr_s,
-            depth=depth,
-            show_progress=True
-        )
-    )
-    
-    # Train base SVC on dev_train only
-    svc = SVC(kernel="precomputed", C=C)
-    svc.fit(K_train, y_train)
-
-    
-    # Obtain decision scores for calibration and test sets
-    scores_cal = svc.decision_function(K_cal)
-    scores_test = svc.decision_function(K_test)
-
-    # Handle binary vs multiclass output shapes
-    if scores_cal.ndim == 1:
-        scores_cal = scores_cal.reshape(-1, 1)
-        scores_test = scores_test.reshape(-1, 1)
-
-    
-    # Chronological probability calibration
-    # Logistic regression maps raw SVC scores to calibrated
-    # class probabilities using ONLY dev_cal data.
-    cal = LogisticRegression(
-        multi_class="multinomial",
-        max_iter=2000
-    )
-    cal.fit(scores_cal, y_cal)
-
-    # Calibrated test probabilities and predictions
-    test_proba = cal.predict_proba(scores_test)
-    test_pred = np.argmax(test_proba, axis=1)
-
-    
-    # Return calibrated test predictions and updated cache
-    return test_pred, test_proba, cache
-
-
-
-
-# def fit_quantum_kernel_and_predict_test(X_dev, y_dev, X_test, depth=2, C=1.0, cache=None, stock_name=""):
-#     if cache is None:
-#         cache = KernelCache()
-
-#     scaler = StandardScaler()
-#     X_dev_s = scaler.fit_transform(X_dev)
-#     X_test_s = scaler.transform(X_test)
-
-#     K_dev = get_cached_kernel_fold(
-#         cache,
-#         key=("K_dev", stock_name, depth),
-#         builder=lambda: quantum_kernel_symmetric(X_dev_s, depth=depth, show_progress=True)
-#     )
-
-#     K_test = get_cached_kernel_fold(
-#         cache,
-#         key=("K_test", stock_name, depth),
-#         builder=lambda: quantum_kernel(X_test_s, X_dev_s, depth=depth, show_progress=True)
-#     )
-
-#     svc = SVC(kernel="precomputed", C=C)
-#     svc.fit(K_dev, y_dev)
-
-#     scores_dev = svc.decision_function(K_dev)
-#     scores_test = svc.decision_function(K_test)
-
-#     if scores_dev.ndim == 1:
-#         scores_dev = scores_dev.reshape(-1, 1)
-#         scores_test = scores_test.reshape(-1, 1)
-
-#     cal = LogisticRegression(multi_class="multinomial", max_iter=2000)
-#     cal.fit(scores_dev, y_dev)
-
-#     test_proba = cal.predict_proba(scores_test)
-#     test_pred = np.argmax(test_proba, axis=1)
-
-#     return test_pred, test_proba, cache

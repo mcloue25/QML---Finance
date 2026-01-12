@@ -163,7 +163,7 @@ def time_train_test_split(X, y, dates, test_size=0.2):
 
 
 
-def run_full_pipeline(ticker_object:list, download_path:str, architectrure_list:list):
+def run_full_pipeline(ticker_object:list, download_path:str, architectrure_list:list, system:str='windows'):
     ''' Function to run the entire pipeline for all stocks from ends to end 
         Does:
             * Downloads all stock tickers
@@ -199,7 +199,7 @@ def run_full_pipeline(ticker_object:list, download_path:str, architectrure_list:
             # NOTE - Main function for training classical & quantum models
             # NOTE - Having some issue here with either USDC-USD or USDT-USD
             # try:
-            #     model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features, architectures=architectrure_list)
+            model_training(csv_path=f'data/csv/historical/training/cleaned/{stock_name}.csv', stock_name=stock_name, feat_list=key_features, architectures=architectrure_list, system=system)
             # except:
             #     continue
     save_JSON_object(portfolio_key_features, 'data/json/portfolio_key_features.json')
@@ -208,7 +208,7 @@ def run_full_pipeline(ticker_object:list, download_path:str, architectrure_list:
 
 
 
-def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10, architectures=['ensemble', 'quantum']):
+def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10, architectures=['ensemble', 'quantum'], system:str='windows'):
     ''' Main function for training different models on the same data
     Args:
         csv_path (String) : PAth to historical data CSV 
@@ -229,7 +229,7 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10,
 
     # Create splits to be used by classicial DL and QML modelling
     splits = make_walkforward_splits(X_dev, n_splits=5, gap=horizon)
-    
+
     # NOTE - Train ensembles
     if 'ensemble' in architectures:
         ensemble_model_training(
@@ -242,6 +242,7 @@ def model_training(csv_path:str, stock_name:str, feat_list=None, horizon:int=10,
     # NOTE - Train quantum model using same splits
     if 'quantum' in architectures: 
         quantum_model_training(
+            system=system,
             stock_name=stock_name,
             X_dev=X_dev, y_dev=y_dev, dates_dev=dates_dev,
             X_test=X_test, y_test=y_test, dates_test=dates_test,
@@ -297,48 +298,142 @@ def ensemble_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test,
 
 
 
-def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), model_tag="QKernelSVC_V1"):
-    ''' Function for training different kinds of quantum models
-    Args:
-        stock_name (String) : String stock name
-        X_dev (np.ndarray) :
-        y_dev (np.ndarray) :
-        dates_dev (np.ndarray) :
-        X_test (np.ndarray) :
-        y_test (np.ndarray) :
-        splits () : 
-        depth () : Controls how expressive the quantum feature map is 
-        Cs (Tuple) : Controls how aggressivly the SVM uses the kernel (bias / variance tradeoff)
-        model_tag (String) : Name of run ID
-    '''
+def quantum_model_training(
+    stock_name: str,
+    X_dev: np.ndarray,
+    y_dev: np.ndarray,
+    dates_dev: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    dates_test: np.ndarray,
+    splits: Iterable[Tuple[np.ndarray, np.ndarray]],
+    depth: int = 2,
+    Cs: Tuple = (0.1, 1.0, 10.0),
+    system: str = "windows",
+    model_tag: str = "QKernelSVC_V1",
+    n_qubits: int = 3,
+    show_kernel_progress: bool = True,
+):
+    """High-level training function for quantum-kernel SVC runs.
+
+    Assumes you provide:
+      - create_folder(...)
+      - analyse_ensemble_results(...)
+
+    Notes:
+      - Uses QMLConfig to select CPU/GPU + kernel mode.
+      - Recommended: kernel_mode="state" for fastest kernel construction.
+    """
     create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
 
+    # Build quantum config (device + feature_map + state_circuit/kernel_fn)
+    n_qubits = X_dev.shape[1]
+    qml_cfg = build_qml_config(n_qubits=n_qubits, system=system, feature_depth_default=depth, kernel_mode="state")
+
+    # Sanity check depending on kernel mode
+    if qml_cfg.kernel_mode == "state" and qml_cfg.state_circuit is None:
+        raise RuntimeError(
+            "state_circuit was not constructed. "
+            "Check PennyLane/Lightning installation or switch kernel_mode='pairwise'."
+        )
+    if qml_cfg.kernel_mode == "pairwise" and qml_cfg.kernel_fn is None:
+        raise RuntimeError(
+            "kernel_fn was not constructed. "
+            "Check PennyLane device/plugins installation."
+        )
+
     cache = KernelCache()
-    all_results = []
+    all_results: List[Dict[str, Any]] = []
+
+    splits = list(splits)  # ensure reusable
 
     for C in Cs:
+        run_tag = f"QKernelSVC_depth{depth}_C{C}"
         results = quantum_kernel_train_loop(
-            X_dev, y_dev, X_test, y_test, splits,
+            X_dev=X_dev,
+            y_dev=y_dev,
+            X_test=X_test,
+            y_test=y_test,
+            splits=splits,
+            qml_cfg=qml_cfg,                 # <-- key change
             depth=depth,
             C=C,
-            model_tag=f"QKernelSVC_depth{depth}_C{C}",
+            model_tag=run_tag,
             cache=cache,
-            stock_name=stock_name,  # used for safe cache keys
+            stock_name=stock_name,
+            show_kernel_progress=show_kernel_progress,
         )
         all_results.append(results)
 
-        # Option A: analyze each run immediately
-        analyse_ensemble_results(
-            results, y_test, dates_dev, y_dev, results["model_tag"],
-            output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/"
-        )
-    cache.clear() 
 
-    # Option B: also pick and report best (example: lowest CV logloss)
+        analyse_ensemble_results(
+            results,
+            y_test,
+            dates_dev,
+            y_dev,
+            results["model_tag"],
+            output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/",
+        )
+
+    cache.clear()
+
     best = min(all_results, key=lambda r: r["cv_logloss_mean"])
     print(f"Best QML run: {best['model_tag']} | CV logloss mean={best['cv_logloss_mean']:.4f}")
 
     return all_results, best
+
+
+# def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), system:str='windows', model_tag="QKernelSVC_V1"):
+#     ''' Function for training different kinds of quantum models
+#     Args:
+#         stock_name (String) : String stock name
+#         X_dev (np.ndarray) :
+#         y_dev (np.ndarray) :
+#         dates_dev (np.ndarray) :
+#         X_test (np.ndarray) :
+#         y_test (np.ndarray) :
+#         splits () : 
+#         depth () : Controls how expressive the quantum feature map is 
+#         Cs (Tuple) : Controls how aggressivly the SVM uses the kernel (bias / variance tradeoff)
+#         model_tag (String) : Name of run ID
+#     '''
+#     create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
+
+#     # Global var setup
+#     n_qubits = 3
+#     if system == "linux":
+#         dev = make_device(n_qubits, "lightning.gpu")
+#     else:
+#         dev = make_device(n_qubits, "lightning.qubit")
+
+#     kernel_circuit = make_kernel_qnode(dev, n_qubits)
+
+#     cache = KernelCache()
+#     all_results = []
+
+#     for C in Cs:
+#         results = quantum_kernel_train_loop(
+#             X_dev, y_dev, X_test, y_test, splits,
+#             depth=depth,
+#             C=C,
+#             model_tag=f"QKernelSVC_depth{depth}_C{C}",
+#             cache=cache,
+#             stock_name=stock_name,  # used for safe cache keys
+#         )
+#         all_results.append(results)
+
+#         # Option A: analyze each run immediately
+#         analyse_ensemble_results(
+#             results, y_test, dates_dev, y_dev, results["model_tag"],
+#             output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/"
+#         )
+#     cache.clear() 
+
+#     # Option B: also pick and report best (example: lowest CV logloss)
+#     best = min(all_results, key=lambda r: r["cv_logloss_mean"])
+#     print(f"Best QML run: {best['model_tag']} | CV logloss mean={best['cv_logloss_mean']:.4f}")
+
+#     return all_results, best
 
 
 
@@ -592,15 +687,17 @@ def main():
     '''
     # NOTE - Load portfolio data 
     portfolio_symbols = load_JSON_object('data/json/tracked_stocks.json')
-    architecture_list = ['ensemble']  # quantum
-
+    # architecture_list = ['ensemble']  # quantum
+    architecture_list = ['quantum']  # ensemble
+    sys = 'linux'
     # NOTE - For running the entire pipelien in plan above 
-    # run_full_pipeline(
-    #     portfolio_symbols, 
-    #     download_path='data/csv/historical/training/raw/',
-    #     architectrure_list=architecture_list
-    # )
-
+    run_full_pipeline(
+        portfolio_symbols, 
+        download_path='data/csv/historical/training/raw/',
+        architectrure_list=architecture_list,
+        system=sys
+    )
+    a-b
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
     # run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json', performance_dict_path='data/json/stock_specific_model_rankings.json')
 

@@ -287,7 +287,7 @@ def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev:
     create_folder(f'{output_path}graphs/')
 
     # CV diagnostics
-    plotter = Plotter('')
+    plotter = Plotter()
     plotter.plot_hist(
         subset_dict(results_dict['hist'], ['log_loss', 'fold']),
         title='Loss Hist',
