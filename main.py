@@ -314,7 +314,7 @@ def quantum_model_training(
     n_qubits: int = 3,
     show_kernel_progress: bool = True,
 ):
-    """High-level training function for quantum-kernel SVC runs.
+    '''High-level training function for quantum-kernel SVC runs.
 
     Assumes you provide:
       - create_folder(...)
@@ -323,7 +323,7 @@ def quantum_model_training(
     Notes:
       - Uses QMLConfig to select CPU/GPU + kernel mode.
       - Recommended: kernel_mode="state" for fastest kernel construction.
-    """
+    '''
     create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
 
     # Build quantum config (device + feature_map + state_circuit/kernel_fn)
@@ -355,7 +355,7 @@ def quantum_model_training(
             X_test=X_test,
             y_test=y_test,
             splits=splits,
-            qml_cfg=qml_cfg,                 # <-- key change
+            qml_cfg=qml_cfg,
             depth=depth,
             C=C,
             model_tag=run_tag,
@@ -373,69 +373,14 @@ def quantum_model_training(
             y_dev,
             results["model_tag"],
             output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/",
+            dates_test = dates_test
         )
 
     cache.clear()
-
     best = min(all_results, key=lambda r: r["cv_logloss_mean"])
     print(f"Best QML run: {best['model_tag']} | CV logloss mean={best['cv_logloss_mean']:.4f}")
-
+    # a-b
     return all_results, best
-
-
-# def quantum_model_training(stock_name, X_dev, y_dev, dates_dev, X_test, y_test, dates_test, splits, depth=2, Cs=(0.1, 1.0, 10.0), system:str='windows', model_tag="QKernelSVC_V1"):
-#     ''' Function for training different kinds of quantum models
-#     Args:
-#         stock_name (String) : String stock name
-#         X_dev (np.ndarray) :
-#         y_dev (np.ndarray) :
-#         dates_dev (np.ndarray) :
-#         X_test (np.ndarray) :
-#         y_test (np.ndarray) :
-#         splits () : 
-#         depth () : Controls how expressive the quantum feature map is 
-#         Cs (Tuple) : Controls how aggressivly the SVM uses the kernel (bias / variance tradeoff)
-#         model_tag (String) : Name of run ID
-#     '''
-#     create_folder(f"data/results/trained_models/qml/{stock_name}/{model_tag}/")
-
-#     # Global var setup
-#     n_qubits = 3
-#     if system == "linux":
-#         dev = make_device(n_qubits, "lightning.gpu")
-#     else:
-#         dev = make_device(n_qubits, "lightning.qubit")
-
-#     kernel_circuit = make_kernel_qnode(dev, n_qubits)
-
-#     cache = KernelCache()
-#     all_results = []
-
-#     for C in Cs:
-#         results = quantum_kernel_train_loop(
-#             X_dev, y_dev, X_test, y_test, splits,
-#             depth=depth,
-#             C=C,
-#             model_tag=f"QKernelSVC_depth{depth}_C{C}",
-#             cache=cache,
-#             stock_name=stock_name,  # used for safe cache keys
-#         )
-#         all_results.append(results)
-
-#         # Option A: analyze each run immediately
-#         analyse_ensemble_results(
-#             results, y_test, dates_dev, y_dev, results["model_tag"],
-#             output_path=f"data/results/trained_models/qml/{stock_name}/{model_tag}/{results['model_tag']}/"
-#         )
-#     cache.clear() 
-
-#     # Option B: also pick and report best (example: lowest CV logloss)
-#     best = min(all_results, key=lambda r: r["cv_logloss_mean"])
-#     print(f"Best QML run: {best['model_tag']} | CV logloss mean={best['cv_logloss_mean']:.4f}")
-
-#     return all_results, best
-
-
 
 
 
@@ -489,6 +434,8 @@ def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str, perfor
             # Split data time serries correct way
             X_dev, y_dev, dates_dev, X_test, y_test, dates_test = time_train_test_split(X, y, dates, test_size=0.2)
 
+            # NOTE - NEED to redo this to scale better 
+            #           Buyild Func to make this dict of paths
             model_pred_paths = {
                 "XGBoost_V1": {
                     "dev": f"data/results/trained_models/ensembles/{stock_name}/XGBoost_V1/XGBoost_V1.parquet",
@@ -498,10 +445,19 @@ def run_backtests_with_comparison(ticker_object:list, feat_dict_path:str, perfor
                     "dev": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1.parquet",
                     "test": f"data/results/trained_models/ensembles/{stock_name}/LGBM_V1/LGBM_V1_test.parquet",
                 },
-                # "QKernelSVC_depth2": {
-                #     "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0.parquet",
-                #     "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0_test.parquet",
-                # }
+                # Quantum models
+                "QKernelSVC_depth2_C0.1": {
+                    "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C0.1/QKernelSVC_depth2_C0.1.parquet",
+                    "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C0.1/QKernelSVC_depth2_C0.1_test.parquet",
+                },
+                "QKernelSVC_depth2_C1.0": {
+                    "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0/QKernelSVC_depth2_C1.0.parquet",
+                    "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C1.0/QKernelSVC_depth2_C1.0_test.parquet",
+                },
+                "QKernelSVC_depth2_C10.0": {
+                    "dev": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C10.0/QKernelSVC_depth2_C10.0.parquet",
+                    "test": f"data/results/trained_models/qml/{stock_name}/QKernelSVC_V1/QKernelSVC_depth2_C10.0/QKernelSVC_depth2_C10.0_test.parquet",
+                }
             }
 
             # NOTE - Evaluate different model results 
@@ -677,6 +633,7 @@ def generate_diversified_portfolio(performance_dict_path:str, portfolio_sectors_
 
     # Show distribution of holdings between sectors
     manager.assess_portforlio_diversity(symbol_sector_dict, position_df, show=True)
+    manager.plot_model_distribution()
     # subset_df = position_df[['stock', 'model_tag', 'weight', 'allocation_score', 'euro']]
     # subset_df.to_csv('data/csv/test/position_df.csv')
 
@@ -707,9 +664,9 @@ def main():
     #     architectrure_list=architecture_list,
     #     system=sys
     # )
-
+    # a-b
     # NOTE - CURRENTLY BEING WORKED ON TO REPLACE run_backtests() - will run all backtests & compare model results locally
-    # run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json', performance_dict_path='data/json/stock_specific_model_rankings.json')
+    run_backtests_with_comparison(portfolio_symbols, feat_dict_path='data/json/portfolio_key_features.json', performance_dict_path='data/json/stock_specific_model_rankings.json')
 
 
     # NOTE - Using best performing model data use PortfolioManager to distribute initial capital into investments

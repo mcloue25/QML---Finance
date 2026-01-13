@@ -137,7 +137,7 @@ class PortfolioManager():
     
 
     # generate_ranked_model_list
-    def analyse_best_performing_models(self, performance_json_path, philosophy_path:str, philosophy:str='BALANCED_V1', show=False):
+    def analyse_best_performing_models(self, performance_json_path, philosophy_path:str, philosophy:str='BALANCED_V1', show:bool=False, save_path:str=None):
         ''' Function to analyse perfromance metrics 
         '''
         # Load model performance data and trading philosophy for deciding how we want to rank stocks
@@ -160,7 +160,10 @@ class PortfolioManager():
             plot.line_plot(self.ranked_df, 'allocation_score')
             plot.bar_plot(self.ranked_df, 'allocation_score')
             plot.histogram_plot(self.ranked_df, 'allocation_score')
-            a-b
+        
+        if save_path:
+            self.ranked_df.to_csv(save_path)
+
         return
 
 
@@ -374,6 +377,16 @@ class PortfolioManager():
             plot = Plotter()
             plot.histogram_plot(self.holdings_df, 'stock_sector')
 
+    
+    def plot_model_distribution(self):
+        ''' Plot model architecture distribution 
+        '''
+        plot = Plotter()
+        print('self.holdings_df')
+        print(self.holdings_df)
+        plot.histogram_plot(self.holdings_df, 'model_tag')
+        
+
 
     
     def append_jsonl(self, output_path: str | Path, record: dict):
@@ -388,4 +401,3 @@ class PortfolioManager():
         with output_path.open("a", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False)
             f.write("\n")
-        

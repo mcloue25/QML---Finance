@@ -292,6 +292,7 @@ class BackTest:
         # Compute daily log returns
         df["ret"] = self.compute_log_returns(df["price"])
         df = df.dropna(subset=["ret", "y_pred"])
+        df["simple_ret"] = df["price"].pct_change().fillna(0.0)
 
         # Build target position from probabilities (policy layer)
         df["target_position"] = self.probability_weighted_position(df, threshold=self.config.entry_threshold)
@@ -299,7 +300,7 @@ class BackTest:
         df["position_lag"] = df["target_position"].shift(self.config.execution_lag).fillna(0.0)
 
         # Execution lag: today's signal becomes tomorrow's position
-        df["position_lag"] = df["target_position"].shift(1).fillna(0.0)
+        # df["position_lag"] = df["target_position"].shift(1).fillna(0.0)
 
         # Strategy gross returns = exposure * asset return
         df["strategy_ret"] = df["position_lag"] * df["ret"]
@@ -313,11 +314,12 @@ class BackTest:
         # Net returns after costs + cumulative log equity curve
         df["net_ret"] = df["strategy_ret"] - df["cost"]
         df["cum_ret"] = df["net_ret"].cumsum()
+        
         return df
 
     
 
-    def trade_list(self,bt_df, price_col=None, pos_col=None, entry_threshold: float = 0.10, exit_threshold: float = 0.10):
+    def trade_list(self,bt_df:pd.DataFrame, price_col:str =None, pos_col:str =None, entry_threshold:float =0.10):
         ''' Build a trade list from continuous exposure by thresholding exposure
         Args:
             bt_df (DataFrame) : backtest DataFrame output from run()
@@ -328,17 +330,37 @@ class BackTest:
         Returns:
             trades_df (DataFrame) : DF contianing all executed trade info
         '''
-        df = bt_df.copy()
+        df = bt_df.copy().sort_index()
 
-        # Use abs exposure so this works even if you later support shorts
-        pos = df[pos_col].fillna(0.0).astype(float).abs()
+        # Defaults that match your run()
+        # if price_col is None:
+        #     price_col = "price" if "price" in df.columns else price_col
+        # if pos_col is None:
+        #     pos_col = "position_lag" if "position_lag" in df.columns else pos_col
+
+        # if price_col is None or price_col not in df.columns:
+        #     raise ValueError(f"bt_df missing required price column '{price_col}'")
+        # if pos_col is None or pos_col not in df.columns:
+        #     raise ValueError(f"bt_df missing required position column '{pos_col}'")
+
+        # required = ["strategy_ret", "net_ret"]
+        # for c in required:
+        #     if c not in df.columns:
+        #         raise ValueError(f"bt_df missing required column '{c}' (expected from run())")
+
+        # Optional-but-useful columns
+        if "turnover" not in df.columns:
+            df["turnover"] = df[pos_col].diff().abs().fillna(0.0)
+        if "cost" not in df.columns:
+            df["cost"] = 0.0
+
         price = df[price_col].astype(float)
+        pos = df[pos_col].fillna(0.0).astype(float).abs()  # long-only; abs ok
 
-        # Threshold-defined trade state
+        # Define in/out of trade by exposure threshold
         in_trade = pos >= entry_threshold
         prev_in_trade = in_trade.shift(1).fillna(False)
 
-        # Crossings define entries/exits
         entries = in_trade & (~prev_in_trade)
         exits = (~in_trade) & prev_in_trade
 
@@ -349,11 +371,10 @@ class BackTest:
         if len(entry_dates) > len(exit_dates):
             exit_dates = exit_dates.append(pd.Index([df.index[-1]]))
 
-        trades = []
-        j = 0
         exit_dates_list = list(exit_dates)
+        j = 0
+        trades = []
 
-        # Pair each entry with the next exit after it
         for e in entry_dates:
             while j < len(exit_dates_list) and exit_dates_list[j] <= e:
                 j += 1
@@ -363,24 +384,95 @@ class BackTest:
             x = exit_dates_list[j]
             j += 1
 
+            # Slice for the trade window (inclusive)
+            w = df.loc[e:x]
+
             entry_px = float(price.loc[e])
             exit_px = float(price.loc[x])
-            ret = (exit_px / entry_px) - 1.0
+
+            # Underlying asset move (reference only)
+            asset_ret = (exit_px / entry_px) - 1.0
+
+            # Strategy returns are LOG returns in your run()
+            gross_log = float(w["strategy_ret"].sum())
+            net_log = float(w["net_ret"].sum())
+
+            # Convert log return to simple return
+            gross_ret = float(np.expm1(gross_log))
+            net_ret = float(np.expm1(net_log))
+
+            # Costs/turnover aggregated over the trade window
+            trade_cost = float(w["cost"].sum())
+            trade_turnover = float(w["turnover"].sum())
+
+            # Duration/bars
+            bars_held = int(w.shape[0] - 1)
+            duration = x - e
+
+            # Within-trade equity curve (net), for dd/runup
+            net_equity = np.exp(w["net_ret"].cumsum())
+            peak = net_equity.cummax()
+            dd = (net_equity / peak) - 1.0
+            max_drawdown = float(dd.min())
+
+            trough = net_equity.cummin()
+            runup = (net_equity / trough) - 1.0
+            max_runup = float(runup.max())
+
+            # MFE/MAE based on asset price (simple, intuitive)
+            mfe = float((price.loc[e:x].max() / entry_px) - 1.0)
+            mae = float((price.loc[e:x].min() / entry_px) - 1.0)
+
+            avg_exposure = float(pos.loc[e:x].mean())
+            max_exposure = float(pos.loc[e:x].max())
+            entry_exposure = float(pos.loc[e])
+            exit_exposure = float(pos.loc[x])
 
             trades.append({
                 "entry_time": e,
                 "exit_time": x,
+                "duration": duration,
+                "bars_held": bars_held,
+
                 "entry_price": entry_px,
                 "exit_price": exit_px,
-                "return": ret,
-                # Profit / Loss from each executed trade
-                "pnl_pct": ret * 100.0,
-                "bars_held": int(df.loc[e:x].shape[0] - 1),
-                "avg_exposure": float(pos.loc[e:x].mean()),
-                "max_exposure": float(pos.loc[e:x].max()),
+
+                # Reference: underlying move during trade window
+                "asset_return": asset_ret,
+                "asset_pnl_pct": asset_ret * 100.0,
+
+                # Strategy-consistent returns (from run())
+                "gross_return": gross_ret,
+                "gross_pnl_pct": gross_ret * 100.0,
+                "net_return": net_ret,
+                "net_pnl_pct": net_ret * 100.0,
+
+                # Cost + turnover attribution
+                "sum_cost": trade_cost,
+                "sum_turnover": trade_turnover,
+
+                # Outcomes
+                "is_win_gross": bool(gross_ret > 0),
+                "is_win_net": bool(net_ret > 0),
+
+                # Exposure
+                "entry_exposure": entry_exposure,
+                "exit_exposure": exit_exposure,
+                "avg_exposure": avg_exposure,
+                "max_exposure": max_exposure,
+
+                # Path-dependent diagnostics
+                "mfe": mfe,
+                "mae": mae,
+                "max_drawdown": max_drawdown,
+                "max_runup": max_runup,
             })
 
-        return pd.DataFrame(trades)
+        trades_df = pd.DataFrame(trades)
+        if not trades_df.empty:
+            trades_df = trades_df.sort_values("entry_time").reset_index(drop=True)
+
+        return trades_df
 
 
 

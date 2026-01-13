@@ -285,6 +285,11 @@ def analyse_ensemble_results(results_dict: dict, y_test: list, dates_dev, y_dev:
     '''
     create_folder(output_path)
     create_folder(f'{output_path}graphs/')
+    
+    # print('Output_path:')
+    # print(output_path)
+    # a-b
+
 
     # CV diagnostics
     plotter = Plotter()
